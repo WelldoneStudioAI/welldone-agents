@@ -496,7 +496,7 @@ async def process_intent(update, intent_data):
     elif intent == "run_rapport":
         await update.message.reply_text("📊 Rapport en cours — tu recevras ton email dans 2-3 min...")
         try:
-            gh_token = os.environ.get("GITHUB_PAT", "")
+            gh_token = os.environ.get("GH_PAT", "")
             if gh_token:
                 requests.post(
                     "https://api.github.com/repos/WelldoneStudioAI/welldone-agents/actions/workflows/rapport.yml/dispatches",
@@ -512,7 +512,7 @@ async def process_intent(update, intent_data):
     elif intent == "run_veille":
         await update.message.reply_text("🔍 Veille en cours — tu recevras ton email dans 3-5 min...")
         try:
-            gh_token = os.environ.get("GITHUB_PAT", "")
+            gh_token = os.environ.get("GH_PAT", "")
             if gh_token:
                 requests.post(
                     "https://api.github.com/repos/WelldoneStudioAI/welldone-agents/actions/workflows/veille.yml/dispatches",
