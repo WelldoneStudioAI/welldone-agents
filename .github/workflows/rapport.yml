@@ -20,7 +20,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install google-auth google-auth-oauthlib google-api-python-client requests anthropic
+        run: pip install google-auth google-auth-oauthlib google-api-python-client google-analytics-data requests anthropic
 
       - name: Reconstruct Google token
         run: |
