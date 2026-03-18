@@ -1,0 +1,36 @@
+name: Rapport GA4 hebdomadaire
+
+on:
+  schedule:
+    # Lundi 8h00 heure de Montréal = 13h00 UTC
+    - cron: '0 13 * * 1'
+  workflow_dispatch: {}   # Déclenchement manuel depuis Telegram
+
+jobs:
+  rapport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install google-auth google-auth-oauthlib google-api-python-client requests anthropic
+
+      - name: Reconstruct Google token
+        run: |
+          echo "${{ secrets.GOOGLE_TOKEN_JSON_B64 }}" | base64 -d > token.json
+          echo "${{ secrets.GA4_SERVICE_ACCOUNT_B64 }}" | base64 -d > ga4_service_account.json 2>/dev/null || true
+
+      - name: Run rapport
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GMAIL_RECIPIENT: awelldonestudio@gmail.com
+          GOOGLE_TOKEN_PATH: token.json
+          GA4_SERVICE_ACCOUNT: ga4_service_account.json
+        run: python email_rapport.py 7

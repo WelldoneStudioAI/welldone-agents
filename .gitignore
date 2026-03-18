@@ -1,0 +1,9 @@
+*.env
+*.json
+!railway.json
+__pycache__/
+*.pyc
+.DS_Store
+token.json
+zoho_token.json
+*.log
