@@ -1,0 +1,60 @@
+name: Build & Deploy to Railway
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: welldonestudioai/welldone-agents
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/welldonestudioai/welldone-agents:latest
+            ghcr.io/welldonestudioai/welldone-agents:${{ github.sha }}
+
+      - name: Deploy to Railway (update image source)
+        run: |
+          curl -s -X POST "https://backboard.railway.app/graphql/v2" \
+            -H "Authorization: Bearer ${{ secrets.RAILWAY_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "query": "mutation($svcId: String!, $envId: String!, $image: String!) { serviceInstanceUpdate(serviceId: $svcId, environmentId: $envId, input: { source: { image: $image } }) }",
+              "variables": {
+                "svcId": "62000009-d720-4aca-a9ae-766937e6689a",
+                "envId": "5d7a6514-00c3-4b3d-a2f7-7f2b64981943",
+                "image": "ghcr.io/welldonestudioai/welldone-agents:latest"
+              }
+            }'
+
+          # Trigger redeploy
+          curl -s -X POST "https://backboard.railway.app/graphql/v2" \
+            -H "Authorization: Bearer ${{ secrets.RAILWAY_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "query": "mutation { serviceInstanceRedeploy(serviceId: \"62000009-d720-4aca-a9ae-766937e6689a\", environmentId: \"5d7a6514-00c3-4b3d-a2f7-7f2b64981943\") }"
+            }'
+
+          echo "✅ Deploy triggered on Railway"
