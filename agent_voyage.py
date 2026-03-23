@@ -1,8 +1,10 @@
 import json
 import asyncio
 import requests
+import os
 
-SERPAPI_KEY = "f68dbc2fbf65738e716bb959db5ae8c4d01a6ca45a1410bda518b4763537b7c9"
+# Clé API pour Google Flights via SerpApi (récupérée de manière sécurisée)
+SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 
 VOYAGE_SYSTEM_PROMPT = """
 # Agent IA — Optimiseur d’itinéraires ultra-efficients (vols + transport combiné)
