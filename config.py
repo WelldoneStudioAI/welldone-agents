@@ -41,7 +41,7 @@ QBO_CLIENT_SECRET  = os.environ.get("QBO_CLIENT_SECRET", "")
 QBO_REFRESH_TOKEN  = os.environ.get("QBO_REFRESH_TOKEN", "")
 QBO_REALM_ID       = os.environ.get("QBO_REALM_ID", "")
 QBO_SERVICE_ITEM_ID = os.environ.get("QBO_SERVICE_ITEM_ID", "1")
-QBO_BASE_URL       = "https://quickbooks.api.intuit.com/v3/company"
+QBO_BASE_URL       = os.environ.get("QBO_BASE_URL", "https://quickbooks.api.intuit.com/v3/company")
 
 # ── Google Sheets (tenue de livres) ───────────────────────────────────────────
 SHEETS_LIVRES_ID   = os.environ.get("SHEETS_LIVRES_ID", "")
