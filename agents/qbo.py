@@ -267,35 +267,33 @@ async def execute_send_direct(user_id: int) -> str:
 
 
 def _build_invoice_body(data: dict) -> dict:
-    """Construit le corps de facture QBO avec taxes et numérotation."""
+    """Construit le corps de facture QBO avec numérotation WS."""
+    line: dict = {
+        "Amount":      data["amount"],
+        "DetailType":  "SalesItemLineDetail",
+        "Description": data["service"],
+        "SalesItemLineDetail": {
+            "UnitPrice": data["amount"],
+            "Qty":       1,
+            "ItemRef":   {"value": QBO_SERVICE_ITEM_ID},
+        },
+    }
+
+    # TaxCodeRef uniquement si un TaxCode existe dans QBO
+    if data.get("tax_code_id"):
+        line["SalesItemLineDetail"]["TaxCodeRef"] = {"value": "TAX"}
+
     body: dict = {
         "DocNumber":   data["inv_num"],
         "CustomerRef": {"value": data["customer_id"]},
-        "CurrencyRef": {"value": "CAD"},
-        "Line": [{
-            "Amount":      data["amount"],
-            "DetailType":  "SalesItemLineDetail",
-            "Description": data["service"],
-            "SalesItemLineDetail": {
-                "UnitPrice":  data["amount"],
-                "Qty":        1,
-                "ItemRef":    {"value": QBO_SERVICE_ITEM_ID},
-                "TaxCodeRef": {"value": "TAX"},
-            },
-        }],
+        "Line":        [line],
     }
 
-    # Ajouter la taxe si un TaxCode a été trouvé
+    # TxnTaxDetail uniquement si un TaxCode a été trouvé
     if data.get("tax_code_id"):
         body["TxnTaxDetail"] = {
             "TxnTaxCodeRef": {"value": data["tax_code_id"]}
         }
-
-    # SalesTermRef "1" = Due on Receipt (peut varier selon la config QBO)
-    try:
-        body["SalesTermRef"] = {"value": "1"}
-    except Exception:
-        pass  # Omettre si erreur
 
     return body
 
