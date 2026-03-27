@@ -77,8 +77,14 @@ def _search_flights(departure_id: str, arrival_id: str, outbound_date: str,
 
     try:
         resp = requests.get("https://serpapi.com/search", params=params, timeout=15)
-        resp.raise_for_status()
         data = resp.json()
+
+        # SerpAPI retourne parfois des erreurs avec status 200
+        if "error" in data:
+            log.error(f"SerpAPI error: {data['error']}")
+            return f"SerpAPI error: {data['error']}"
+
+        resp.raise_for_status()
 
         all_flights = data.get("best_flights", []) + data.get("other_flights", [])
         if not all_flights:
@@ -179,6 +185,7 @@ class VoyageAgent(BaseAgent):
             ])
 
             for (tc_id, fn_name, _), result in zip(tasks, results):
+                log.info(f"voyage: tool result [{fn_name}] = {result[:200]}")
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc_id,
