@@ -30,7 +30,8 @@ GOOGLE_OAUTH_SCOPES = [
 ]
 
 # ── Notion ────────────────────────────────────────────────────────────────────
-NOTION_TOKEN      = os.environ.get("NOTION_TOKEN", "")
+# Supporte NOTION_TOKEN (legacy) et NOTION_API_KEY (Railway actuel)
+NOTION_TOKEN      = os.environ.get("NOTION_TOKEN", "") or os.environ.get("NOTION_API_KEY", "")
 NOTION_TASK_DB    = os.environ.get("NOTION_TASK_DB", "bd4cff932b7842b19f7cb748e1abda48")
 NOTION_SOURCES_DB = os.environ.get("NOTION_SOURCES_DB", "10e87f01b8ec4c60a6383d48c7aac4a2")
 
