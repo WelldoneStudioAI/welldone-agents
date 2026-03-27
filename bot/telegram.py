@@ -238,6 +238,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if reply:
         await update.message.reply_text(reply)
 
+    # Pour les agents lents (voyage), maintenir l'indicateur de frappe
+    SLOW_AGENTS = {"voyage"}
+    if agent_name in SLOW_AGENTS:
+        import asyncio as _asyncio
+
+        async def _keep_typing():
+            for _ in range(12):  # max 60 secondes (5s x 12)
+                await _asyncio.sleep(5)
+                try:
+                    await context.bot.send_chat_action(
+                        chat_id=update.effective_chat.id, action="typing"
+                    )
+                except Exception:
+                    break
+
+        typing_task = _asyncio.create_task(_keep_typing())
+    else:
+        typing_task = None
+
     # Cas spécial QBO create → flux preview
     if agent_name == "qbo" and command == "create":
         # Injecter user_id dans le context pour que l'agent puisse stocker le pending
@@ -269,6 +288,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result = await chat_respond(text, history[:-1])
     else:
         result = await dispatch(agent_name, command, ctx)
+
+    if typing_task:
+        typing_task.cancel()
+
+    if not result:
+        result = "❌ Aucune réponse reçue de l'agent."
 
     _add_to_history(user_id, "assistant", result)
     await _send_md(update, result)

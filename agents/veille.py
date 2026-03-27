@@ -48,11 +48,12 @@ class VeilleAgent(BaseAgent):
             self._send_email(idees, notion_url)
             log.info("veille.run done")
 
+            notion_line = "📋 Page Notion créée\n" if notion_url else ""
             return (
                 f"✅ Veille {TODAY} complète !\n"
                 f"📡 {len(sources)} sources · {len(articles)} articles\n"
                 f"💡 10 idées générées\n"
-                f"{'📋 Page Notion créée\n' if notion_url else ''}"
+                f"{notion_line}"
                 f"📧 Email envoyé à {GMAIL_RECIPIENT}"
             )
         except Exception as e:
