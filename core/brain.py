@@ -45,6 +45,9 @@ Pour "send" gmail, context doit avoir: to, subject, body (et optionnellement sig
 Pour "add" calendar, context doit avoir: title, date (YYYY-MM-DD), et optionnellement time (HH:MM)
 Pour "task" notion, context doit avoir: title, et optionnellement priority, date, notes
 Pour "create" qbo, context doit avoir: client (nom), amount (float), description (str), et optionnellement client_email si le client est nouveau
+  → Si le type de service n'est pas mentionné dans le message, mets description="?" pour que le bot affiche les pills de sélection
+  → Services disponibles: "Photographie corporative", "Photographie commerciale", "Service digital", "Consultation stratégique"
+  → Si le service est clairement mentionné (ex: "photo", "digital", "consultation"), utilise directement la valeur correspondante
 Pour "create_client" qbo, context doit avoir: display_name (str), email (str), et optionnellement phone, address
 Pour "send" qbo, context doit avoir: invoice_id OU invoice_num (numéro de facture)
 Pour "list" qbo, context peut avoir: status ("unpaid"|"overdue"|"all"), limit (int)

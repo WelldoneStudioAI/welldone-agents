@@ -5,17 +5,46 @@ RÈGLE : Ce fichier ne contient AUCUNE logique métier.
 Il parse les commandes et route vers core/dispatcher.py ou core/brain.py.
 """
 import logging
-from telegram import Update, BotCommand
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler,
+    CallbackQueryHandler, filters, ContextTypes,
+)
 from core.dispatcher import dispatch, help_text, discover_agents
 from core.brain import parse_intent, chat_respond
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USER_ID
+from agents.qbo import (
+    store_pending, get_pending, clear_pending,
+    execute_create, execute_send_direct,
+    _build_invoice_preview, _format_preview,
+    _next_invoice_number, _get_qbo_tax_code,
+    QBOAgent,
+)
 
 log = logging.getLogger(__name__)
 
 # Historique de conversation par user_id (rolling window)
 _conversations: dict[int, list[dict]] = {}
 MAX_HISTORY = 20
+
+# ── Keyboard services ─────────────────────────────────────────────────────────
+SERVICE_MAP = {
+    "svc_corporate":    "Photographie corporative",
+    "svc_commercial":   "Photographie commerciale",
+    "svc_digital":      "Service digital",
+    "svc_consultation": "Consultation stratégique",
+}
+
+SERVICE_KEYBOARD = InlineKeyboardMarkup([
+    [
+        InlineKeyboardButton("📸 Photo corporative",  callback_data="svc_corporate"),
+        InlineKeyboardButton("🏪 Photo commerciale",  callback_data="svc_commercial"),
+    ],
+    [
+        InlineKeyboardButton("💻 Service digital",    callback_data="svc_digital"),
+        InlineKeyboardButton("🧠 Consultation",       callback_data="svc_consultation"),
+    ],
+])
 
 
 def _get_history(user_id: int) -> list[dict]:
@@ -36,11 +65,55 @@ def _is_allowed(update: Update) -> bool:
 async def _send(update: Update, text: str):
     """Envoie un message en gérant les limites de taille Telegram (4096 chars)."""
     if len(text) <= 4096:
+        await update.effective_message.reply_text(text, parse_mode="MarkdownV2")
+        return
+    for i in range(0, len(text), 4000):
+        await update.effective_message.reply_text(text[i:i+4000], parse_mode="MarkdownV2")
+
+
+async def _send_md(update: Update, text: str):
+    """Envoie en Markdown standard (pour messages simples sans caractères spéciaux)."""
+    if len(text) <= 4096:
         await update.effective_message.reply_text(text, parse_mode="Markdown")
         return
-    # Découper en chunks
     for i in range(0, len(text), 4000):
         await update.effective_message.reply_text(text[i:i+4000], parse_mode="Markdown")
+
+
+# ── Preview QBO ───────────────────────────────────────────────────────────────
+
+async def _show_qbo_preview(update: Update, user_id: int):
+    """Affiche la preview de facturation avec les boutons d'action."""
+    data = get_pending(user_id)
+    if not data:
+        await update.message.reply_text("❌ Erreur interne : données pending introuvables.")
+        return
+
+    preview_text = _format_preview(data)
+
+    tax_warning = ""
+    if data.get("_tax_warning"):
+        tax_warning = "\n\n⚠️ _Aucun TaxCode TPS/TVQ trouvé dans QBO — facture créée sans taxe._"
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Créer dans QuickBooks",  callback_data=f"qbo_draft_{user_id}"),
+            InlineKeyboardButton("📤 Envoyer directement",   callback_data=f"qbo_send_{user_id}"),
+        ],
+        [
+            InlineKeyboardButton("✏️ Modifier client",  callback_data=f"qbo_edit_client_{user_id}"),
+            InlineKeyboardButton("✏️ Modifier montant", callback_data=f"qbo_edit_amount_{user_id}"),
+        ],
+        [
+            InlineKeyboardButton("❌ Annuler", callback_data=f"qbo_cancel_{user_id}"),
+        ],
+    ])
+
+    await update.message.reply_text(
+        preview_text + tax_warning,
+        parse_mode="MarkdownV2",
+        reply_markup=keyboard,
+    )
 
 
 # ── Commandes slash ────────────────────────────────────────────────────────────
@@ -48,7 +121,7 @@ async def _send(update: Update, text: str):
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update): return
     text = await help_text()
-    await _send(update, text)
+    await _send_md(update, text)
 
 
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -59,13 +132,12 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update): return
-    await _send(update, await help_text())
+    await _send_md(update, await help_text())
 
 
 async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update): return
     await update.message.reply_text("⏳ Vérification des services...")
-    # Import ici pour éviter les imports circulaires
     import health as h
     results = h.run_checks()
     report  = h.format_report(results)
@@ -74,9 +146,7 @@ async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_agent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Handler générique pour /gmail, /calendar, /notion, /analytics, /zoho, /veille.
-    Extrait l'agent depuis la commande et la sous-commande depuis les args.
-
+    Handler générique pour /gmail, /calendar, /notion, /analytics, /qbo, /veille.
     Ex: /gmail read → dispatch("gmail", "read")
         /analytics rapport --days 7 → dispatch("analytics", "rapport", {"days": 7})
     """
@@ -87,7 +157,6 @@ async def cmd_agent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     agent_name = parts[0] if parts else ""
     command    = parts[1] if len(parts) > 1 else "help"
 
-    # Extraire les paramètres simples --key value
     ctx = {}
     i   = 2
     while i < len(parts):
@@ -101,14 +170,14 @@ async def cmd_agent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if command == "help":
         agent_obj = discover_agents().get(agent_name)
         if agent_obj:
-            await _send(update, await agent_obj.help())
+            await _send_md(update, await agent_obj.help())
         else:
             await update.message.reply_text(f"❌ Agent `{agent_name}` introuvable")
         return
 
     await update.message.reply_text(f"⏳ /{agent_name} {command}...")
     result = await dispatch(agent_name, command, ctx or None)
-    await _send(update, result)
+    await _send_md(update, result)
 
 
 # ── Messages naturels ──────────────────────────────────────────────────────────
@@ -119,27 +188,182 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text    = update.message.text or ""
 
+    # ── Gestion des éditions en attente (Modifier client / Modifier montant) ──
+    awaiting = context.user_data.get("awaiting_edit")
+    if awaiting:
+        pending = get_pending(user_id)
+        if pending:
+            if awaiting == "client":
+                # Rechercher le nouveau client dans QBO
+                from agents.qbo import _find_customer
+                new_customer = _find_customer(text.strip())
+                if new_customer:
+                    pending["customer_id"]   = new_customer["Id"]
+                    pending["customer_name"] = new_customer.get("DisplayName", text.strip())
+                    pending["email"]         = new_customer.get("PrimaryEmailAddr", {}).get("Address", "—")
+                    # Recalculer le numéro si nécessaire (garder le même)
+                    store_pending(user_id, pending)
+                    context.user_data.pop("awaiting_edit", None)
+                    await update.message.reply_text(f"✅ Client mis à jour : {pending['customer_name']}")
+                    await _show_qbo_preview(update, user_id)
+                else:
+                    await update.message.reply_text(
+                        f"❓ Client *{text.strip()}* introuvable dans QBO.\n"
+                        f"Tape son email pour le créer ou recommence.",
+                        parse_mode="Markdown",
+                    )
+                return
+
+            elif awaiting == "amount":
+                try:
+                    new_amount = float(text.strip().replace(",", ".").replace("$", "").replace(" ", ""))
+                    pending["amount"] = new_amount
+                    pending["tps"]    = round(new_amount * 0.05, 2)
+                    pending["tvq"]    = round(new_amount * 0.09975, 2)
+                    pending["total"]  = round(new_amount + pending["tps"] + pending["tvq"], 2)
+                    store_pending(user_id, pending)
+                    context.user_data.pop("awaiting_edit", None)
+                    await update.message.reply_text(f"✅ Montant mis à jour : ${new_amount:,.2f}")
+                    await _show_qbo_preview(update, user_id)
+                except ValueError:
+                    await update.message.reply_text("❌ Montant invalide. Ex: 2500 ou 1 250,00")
+                return
+
     _add_to_history(user_id, "user", text)
 
-    # Afficher indicateur de frappe
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
-    # Parse l'intention avec Claude
     history = _get_history(user_id)
     agent_name, command, ctx, reply = await parse_intent(text, history[:-1])
 
-    # Si Claude a un message de confirmation à afficher
     if reply:
         await update.message.reply_text(reply)
 
-    # Exécuter l'action
+    # Cas spécial QBO create → flux preview
+    if agent_name == "qbo" and command == "create":
+        # Passer user_id à l'agent pour gérer le pending state
+        agents = discover_agents()
+        qbo_agent = agents.get("qbo")
+        if qbo_agent:
+            result = await qbo_agent.create(context=ctx, user_id=user_id)
+        else:
+            result = await dispatch(agent_name, command, ctx)
+
+        if result == QBOAgent.NEEDS_SERVICE:
+            # Afficher les pills de sélection de service
+            pending = get_pending(user_id)
+            await update.message.reply_text(
+                f"📋 Facture pour *{pending['customer_name']}* — {pending['amount']:,.2f} $\n"
+                f"Quel type de service ?",
+                parse_mode="Markdown",
+                reply_markup=SERVICE_KEYBOARD,
+            )
+            return
+
+        if result == QBOAgent.NEEDS_CONFIRMATION:
+            await _show_qbo_preview(update, user_id)
+            return
+
+        # Si erreur ou client introuvable → message normal
+        _add_to_history(user_id, "assistant", result)
+        await _send_md(update, result)
+        return
+
+    # Tous les autres agents
     if agent_name == "chat":
         result = await chat_respond(text, history[:-1])
     else:
         result = await dispatch(agent_name, command, ctx)
 
     _add_to_history(user_id, "assistant", result)
-    await _send(update, result)
+    await _send_md(update, result)
+
+
+# ── Callbacks inline keyboards ────────────────────────────────────────────────
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gère tous les callbacks des inline keyboards QBO."""
+    query   = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    data    = query.data
+
+    # ── Créer brouillon ───────────────────────────────────────────────────────
+    if data.startswith("qbo_draft_"):
+        await query.edit_message_text("⏳ Création en cours...")
+        result = await execute_create(user_id)
+        await query.edit_message_text(result, parse_mode="Markdown")
+
+    # ── Créer + envoyer ───────────────────────────────────────────────────────
+    elif data.startswith("qbo_send_"):
+        await query.edit_message_text("⏳ Création et envoi en cours...")
+        result = await execute_send_direct(user_id)
+        await query.edit_message_text(result, parse_mode="Markdown")
+
+    # ── Annuler ───────────────────────────────────────────────────────────────
+    elif data.startswith("qbo_cancel_"):
+        clear_pending(user_id)
+        await query.edit_message_text("❌ Facture annulée.")
+
+    # ── Modifier client ───────────────────────────────────────────────────────
+    elif data.startswith("qbo_edit_client_"):
+        context.user_data["awaiting_edit"] = "client"
+        await query.message.reply_text("✏️ Tape le nouveau nom du client :")
+
+    # ── Modifier montant ──────────────────────────────────────────────────────
+    elif data.startswith("qbo_edit_amount_"):
+        context.user_data["awaiting_edit"] = "amount"
+        await query.message.reply_text("✏️ Tape le nouveau montant (ex: 3500) :")
+
+    # ── Sélection service (pills) ─────────────────────────────────────────────
+    elif data.startswith("svc_"):
+        service_name = SERVICE_MAP.get(data)
+        if not service_name:
+            await query.answer("Service inconnu.")
+            return
+
+        pending = get_pending(user_id)
+        if not pending:
+            await query.edit_message_text("❌ Session expirée. Recommence la commande.")
+            return
+
+        # Mettre à jour le service et générer le numéro + taxes
+        pending["service"] = service_name
+        if pending.get("inv_num") is None:
+            pending["inv_num"]     = _next_invoice_number()
+            pending["tax_code_id"] = _get_qbo_tax_code()
+            amount = pending["amount"]
+            pending["tps"]   = round(amount * 0.05, 2)
+            pending["tvq"]   = round(amount * 0.09975, 2)
+            pending["total"] = round(amount + pending["tps"] + pending["tvq"], 2)
+
+        store_pending(user_id, pending)
+
+        # Afficher la preview
+        preview_text = _format_preview(pending)
+        tax_warning = ""
+        if pending.get("_tax_warning") or pending.get("tax_code_id") is None:
+            tax_warning = "\n\n⚠️ _Aucun TaxCode TPS/TVQ trouvé — facture sans taxe._"
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Créer dans QuickBooks",  callback_data=f"qbo_draft_{user_id}"),
+                InlineKeyboardButton("📤 Envoyer directement",   callback_data=f"qbo_send_{user_id}"),
+            ],
+            [
+                InlineKeyboardButton("✏️ Modifier client",  callback_data=f"qbo_edit_client_{user_id}"),
+                InlineKeyboardButton("✏️ Modifier montant", callback_data=f"qbo_edit_amount_{user_id}"),
+            ],
+            [
+                InlineKeyboardButton("❌ Annuler", callback_data=f"qbo_cancel_{user_id}"),
+            ],
+        ])
+
+        await query.edit_message_text(
+            preview_text + tax_warning,
+            parse_mode="MarkdownV2",
+            reply_markup=keyboard,
+        )
 
 
 # ── Setup de l'application ─────────────────────────────────────────────────────
@@ -159,6 +383,9 @@ def build_app() -> Application:
     for agent_name in agents:
         app.add_handler(CommandHandler(agent_name, cmd_agent))
         log.info(f"Telegram: handler /{agent_name} enregistré")
+
+    # Callbacks inline keyboards
+    app.add_handler(CallbackQueryHandler(handle_callback))
 
     # Messages naturels
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

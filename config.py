@@ -47,16 +47,20 @@ QBO_BASE_URL       = os.environ.get("QBO_BASE_URL", "https://quickbooks.api.intu
 SHEETS_LIVRES_ID   = os.environ.get("SHEETS_LIVRES_ID", "")
 
 # ── Email ─────────────────────────────────────────────────────────────────────
-GMAIL_RECIPIENT = os.environ.get("GMAIL_RECIPIENT", "awelldonestudio@gmail.com")
-EMAIL_FROM_JP   = "jptanguay@awelldone.studio"
-EMAIL_FROM_BILL = "billing@awelldone.studio"
-EMAIL_BCC       = "ia@awelldone.studio"
+GMAIL_RECIPIENT    = os.environ.get("GMAIL_RECIPIENT", "awelldonestudio@gmail.com")
+EMAIL_FROM_JP      = "jptanguay@awelldone.studio"
+EMAIL_FROM_BILL    = "billing@awelldone.studio"
+EMAIL_BCC          = "ia@awelldone.studio"
+GMAIL_BILLING_FROM = os.environ.get("GMAIL_BILLING_FROM", "facturation@awelldone.studio")
+
+# ── QBO Facturation ───────────────────────────────────────────────────────────
+QBO_BILLING_SIGNATURE = "Service Externe Comptabilité Welldone Studio"
 
 # ── Google Analytics ──────────────────────────────────────────────────────────
 GA4_PROPERTY_ID = os.environ.get("GA4_PROPERTY_ID", "522467276")
 
 # ── Search Console ────────────────────────────────────────────────────────────
-GSC_SITE_STUDIO = "sc-domain:awelldone.com"
+GSC_SITE_STUDIO = "sc-domain:awelldone.studio"
 GSC_SITE_ARCHI  = "sc-domain:welldone.archi"
 
 # ── OpenAI (Agent Voyage — GPT-4o + function calling) ────────────────────────
