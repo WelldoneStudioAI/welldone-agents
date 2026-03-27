@@ -56,34 +56,58 @@ def _get_hubs(destination: str) -> list[str]:
 EXTRACT_PROMPT = """Extrais les paramètres de voyage de ce message et retourne UNIQUEMENT un JSON valide.
 
 JSON attendu :
-{
-  "origin": "YUL",           // code IATA départ (défaut YUL si Montréal)
-  "destination": "SXM",      // code IATA destination
-  "outbound_date": "2026-05-15",  // YYYY-MM-DD
-  "return_date": "2026-05-22",    // YYYY-MM-DD ou null si aller simple
-  "missing": ""              // si une info cruciale manque, pose UNE question ici
-}
+{{
+  "origin": "YUL",
+  "destination": "SXM",
+  "outbound_date": "YYYY-MM-DD",
+  "return_date": "YYYY-MM-DD ou null",
+  "missing": ""
+}}
 
-Aujourd'hui : {today}
-Si l'info est manquante (destination ou dates), mets la question dans "missing" et null ailleurs."""
+RÈGLES CRITIQUES :
+- Aujourd'hui c'est le {today} (année {year})
+- Toutes les dates DOIVENT être dans le futur par rapport à aujourd'hui
+- Si l'utilisateur dit "15 mai" sans préciser l'année, utilise {year} si la date est future, sinon {next_year}
+- Si les dates sont manquantes, pose UNE question dans "missing"
+- origin défaut = YUL (Montréal)"""
 
 
 async def _extract_params(client, query: str) -> dict:
     """Phase 1 : GPT-4o extrait les paramètres structurés du message naturel."""
-    today = date.today().isoformat()
+    today     = date.today()
+    next_year = today.year + 1
+    prompt    = EXTRACT_PROMPT.format(
+        today=today.isoformat(),
+        year=today.year,
+        next_year=next_year,
+    )
     resp = await client.chat.completions.create(
         model="gpt-4o",
         max_tokens=300,
         temperature=0,
         messages=[
-            {"role": "system", "content": EXTRACT_PROMPT.replace("{today}", today)},
+            {"role": "system", "content": prompt},
             {"role": "user",   "content": query},
         ],
     )
     raw = resp.choices[0].message.content.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1].lstrip("json").strip()
-    return json.loads(raw)
+    params = json.loads(raw)
+
+    # Validation : corriger les dates passées automatiquement
+    for field in ("outbound_date", "return_date"):
+        val = params.get(field)
+        if not val:
+            continue
+        d = date.fromisoformat(val)
+        if d < today:
+            # Ajouter 1 an si la date est passée
+            params[field] = d.replace(year=d.year + 1).isoformat()
+            log.warning(f"voyage: date {val} dans le passé → corrigée à {params[field]}")
+
+    log.info(f"voyage: params extraits = {params}")
+    return params
 
 
 # ── Phase 2 : Génération du matrix de recherche ───────────────────────────────
