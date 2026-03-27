@@ -34,12 +34,16 @@ NOTION_TOKEN      = os.environ.get("NOTION_TOKEN", "")
 NOTION_TASK_DB    = os.environ.get("NOTION_TASK_DB", "bd4cff932b7842b19f7cb748e1abda48")
 NOTION_SOURCES_DB = os.environ.get("NOTION_SOURCES_DB", "10e87f01b8ec4c60a6383d48c7aac4a2")
 
-# ── Zoho Books ────────────────────────────────────────────────────────────────
-ZOHO_CLIENT_ID     = os.environ.get("ZOHO_CLIENT_ID", "")
-ZOHO_CLIENT_SECRET = os.environ.get("ZOHO_CLIENT_SECRET", "")
-ZOHO_ORG_ID        = os.environ.get("ZOHO_ORG_ID", "")
-ZOHO_REFRESH_TOKEN = os.environ.get("ZOHO_REFRESH_TOKEN", "")
-ZOHO_BASE_URL      = "https://www.zohoapis.ca/books/v3"
+# ── QuickBooks Online ─────────────────────────────────────────────────────────
+QBO_CLIENT_ID      = os.environ.get("QBO_CLIENT_ID", "")
+QBO_CLIENT_SECRET  = os.environ.get("QBO_CLIENT_SECRET", "")
+QBO_REFRESH_TOKEN  = os.environ.get("QBO_REFRESH_TOKEN", "")
+QBO_REALM_ID       = os.environ.get("QBO_REALM_ID", "")
+QBO_SERVICE_ITEM_ID = os.environ.get("QBO_SERVICE_ITEM_ID", "1")
+QBO_BASE_URL       = "https://quickbooks.api.intuit.com/v3/company"
+
+# ── Google Sheets (tenue de livres) ───────────────────────────────────────────
+SHEETS_LIVRES_ID   = os.environ.get("SHEETS_LIVRES_ID", "")
 
 # ── Email ─────────────────────────────────────────────────────────────────────
 GMAIL_RECIPIENT = os.environ.get("GMAIL_RECIPIENT", "awelldonestudio@gmail.com")

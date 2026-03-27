@@ -18,9 +18,10 @@ class GmailAgent(BaseAgent):
     @property
     def commands(self):
         return {
-            "read":   self.read_unread,
-            "send":   self.send,
-            "search": self.search_contact,
+            "read":          self.read_unread,
+            "send":          self.send,
+            "search":        self.search_contact,
+            "scan_invoices": self.scan_invoices,
         }
 
     async def read_unread(self, context: dict | None = None) -> str:
@@ -153,6 +154,119 @@ class GmailAgent(BaseAgent):
             lines.append(f"{i}. *{c['name']}* — `{c['email']}` ({c['source']})")
 
         return "\n".join(lines)
+
+
+    async def scan_invoices(self, context: dict | None = None) -> str:
+        """
+        Cherche les factures reçues dans Gmail et les classe dans Google Sheets.
+
+        context: {"days": 7}  ← période de recherche (défaut: 7 jours)
+        """
+        import anthropic as _anthropic
+        from core.sheets import sheets_ensure_header, sheets_append
+        from config import SHEETS_LIVRES_ID, ANTHROPIC_API_KEY, CLAUDE_MODEL
+
+        ctx  = context or {}
+        days = ctx.get("days", 7)
+
+        if not SHEETS_LIVRES_ID:
+            return "❌ SHEETS_LIVRES_ID non défini dans Railway — crée un Google Sheet et ajoute son ID."
+
+        try:
+            svc = get_google_service("gmail", "v1")
+            query = f"(facture OR invoice OR bill OR receipt) newer_than:{days}d"
+            results = svc.users().messages().list(
+                userId="me", q=query, maxResults=20
+            ).execute()
+            messages = results.get("messages", [])
+
+            if not messages:
+                return f"📭 Aucune facture trouvée dans les {days} derniers jours."
+
+            # S'assurer que les en-têtes existent
+            sheets_ensure_header(SHEETS_LIVRES_ID)
+
+            ai = _anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            added = 0
+            skipped = 0
+
+            for msg in messages:
+                try:
+                    data = svc.users().messages().get(
+                        userId="me", id=msg["id"], format="full"
+                    ).execute()
+                    headers = {h["name"]: h["value"] for h in data["payload"].get("headers", [])}
+
+                    sender  = headers.get("From", "Inconnu")[:80]
+                    subject = headers.get("Subject", "")[:100]
+                    date    = headers.get("Date", "")[:30]
+
+                    # Extraire le texte du corps
+                    body_text = _extract_email_body(data["payload"])[:3000]
+
+                    # Claude analyse le corps pour extraire les infos
+                    extraction = ai.messages.create(
+                        model=CLAUDE_MODEL,
+                        max_tokens=300,
+                        system="Extrait les informations de cette facture reçue. Réponds UNIQUEMENT en JSON: {\"fournisseur\": str, \"no_facture\": str, \"montant\": str, \"date_facture\": str, \"echeance\": str, \"est_facture\": bool}. Si ce n'est pas une facture, met est_facture: false.",
+                        messages=[{"role": "user", "content": f"De: {sender}\nSujet: {subject}\nDate: {date}\n\n{body_text}"}],
+                    )
+                    raw = extraction.content[0].text.strip()
+                    if raw.startswith("```"):
+                        raw = raw.split("```")[1]
+                        if raw.startswith("json"):
+                            raw = raw[4:]
+
+                    import json as _json
+                    info = _json.loads(raw)
+
+                    if not info.get("est_facture", False):
+                        skipped += 1
+                        continue
+
+                    from datetime import datetime as _dt
+                    row = [
+                        _dt.now().strftime("%Y-%m-%d"),
+                        info.get("fournisseur") or sender,
+                        info.get("no_facture", ""),
+                        info.get("montant", ""),
+                        info.get("date_facture", ""),
+                        info.get("echeance", ""),
+                        "À payer",
+                        subject,
+                    ]
+                    sheets_append(SHEETS_LIVRES_ID, row)
+                    added += 1
+
+                except Exception as e:
+                    log.warning(f"gmail.scan_invoices: skip msg {msg['id']}: {e}")
+                    skipped += 1
+                    continue
+
+            return (
+                f"📊 Scan terminé ({days} jours) :\n"
+                f"✅ {added} facture(s) ajoutée(s) au Google Sheet\n"
+                f"⏭ {skipped} email(s) ignoré(s) (non-factures ou erreurs)"
+            )
+
+        except Exception as e:
+            log.error(f"gmail.scan_invoices error: {e}")
+            return f"❌ Erreur scan factures: {e}"
+
+
+def _extract_email_body(payload: dict) -> str:
+    """Extrait le texte brut d'un message Gmail (récursif sur les parts)."""
+    import base64 as _b64
+    mime = payload.get("mimeType", "")
+    if mime == "text/plain":
+        data = payload.get("body", {}).get("data", "")
+        if data:
+            return _b64.urlsafe_b64decode(data + "==").decode("utf-8", errors="ignore")
+    for part in payload.get("parts", []):
+        result = _extract_email_body(part)
+        if result:
+            return result
+    return ""
 
 
 agent = GmailAgent()

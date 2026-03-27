@@ -81,22 +81,40 @@ def check_notion() -> dict:
         return {"service": "Notion", "status": "error", "detail": str(e)}
 
 
-def check_zoho() -> dict:
+def check_qbo() -> dict:
     try:
         import requests
-        from core.auth import get_zoho_access_token
-        from config import ZOHO_BASE_URL, ZOHO_ORG_ID
-        token = get_zoho_access_token()
-        resp  = requests.get(
-            f"{ZOHO_BASE_URL}/invoices",
-            headers={"Authorization": f"Zoho-oauthtoken {token}"},
-            params={"organization_id": ZOHO_ORG_ID, "per_page": 1},
-            timeout=5,
+        from base64 import b64encode
+        from config import QBO_CLIENT_ID, QBO_CLIENT_SECRET, QBO_REFRESH_TOKEN, QBO_REALM_ID, QBO_BASE_URL
+        if not all([QBO_CLIENT_ID, QBO_CLIENT_SECRET, QBO_REFRESH_TOKEN, QBO_REALM_ID]):
+            missing = [k for k, v in {
+                "QBO_CLIENT_ID": QBO_CLIENT_ID,
+                "QBO_CLIENT_SECRET": QBO_CLIENT_SECRET,
+                "QBO_REFRESH_TOKEN": QBO_REFRESH_TOKEN,
+                "QBO_REALM_ID": QBO_REALM_ID,
+            }.items() if not v]
+            return {"service": "QuickBooks Online", "status": "error",
+                    "detail": f"Variables manquantes : {', '.join(missing)}"}
+        credentials = b64encode(f"{QBO_CLIENT_ID}:{QBO_CLIENT_SECRET}".encode()).decode()
+        resp = requests.post(
+            "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+            headers={"Authorization": f"Basic {credentials}",
+                     "Content-Type": "application/x-www-form-urlencoded"},
+            data={"grant_type": "refresh_token", "refresh_token": QBO_REFRESH_TOKEN},
+            timeout=10,
         )
         resp.raise_for_status()
-        return {"service": "Zoho Books", "status": "ok", "detail": "API accessible"}
+        access_token = resp.json()["access_token"]
+        info = requests.get(
+            f"{QBO_BASE_URL}/{QBO_REALM_ID}/companyinfo/{QBO_REALM_ID}",
+            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
+            timeout=5,
+        )
+        info.raise_for_status()
+        company = info.json().get("CompanyInfo", {}).get("CompanyName", "OK")
+        return {"service": "QuickBooks Online", "status": "ok", "detail": company}
     except Exception as e:
-        return {"service": "Zoho Books", "status": "error", "detail": str(e)}
+        return {"service": "QuickBooks Online", "status": "error", "detail": str(e)}
 
 
 def check_anthropic() -> dict:
@@ -151,7 +169,7 @@ CHECKS = {
     "ga4":       check_google_service_account,
     "calendar":  check_google_calendar,
     "notion":    check_notion,
-    "zoho":      check_zoho,
+    "qbo":       check_qbo,
     "anthropic": check_anthropic,
     "telegram":  check_telegram,
     "openai":    check_openai,

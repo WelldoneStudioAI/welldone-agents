@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 _TMP = Path(tempfile.gettempdir())
 _SA_JSON_PATH    = _TMP / "gws_service_account.json"
 _OAUTH_JSON_PATH = _TMP / "gws_oauth_token.json"
-_ZOHO_JSON_PATH  = _TMP / "zoho_token.json"
+_QBO_JSON_PATH   = _TMP / "qbo_token.json"
 
 # Chemin des tokens locaux (dev/transition)
 _LOCAL_TOKENS = Path.home() / ".config" / "gws"
@@ -137,49 +137,54 @@ def get_google_service(api_name: str, api_version: str, use_service_account: boo
     return build(api_name, api_version, credentials=creds)
 
 
-# ── Zoho Books ─────────────────────────────────────────────────────────────────
+# ── QuickBooks Online ──────────────────────────────────────────────────────────
 
-def get_zoho_access_token() -> str:
+def get_qbo_access_token() -> str:
     """
-    Retourne un access token Zoho valide.
-    Utilise le refresh_token pour en obtenir un nouveau si nécessaire.
+    Retourne un access token QuickBooks Online valide.
+    Utilise le refresh_token (OAuth 2.0) pour en obtenir un nouveau si nécessaire.
+    Met le token en cache dans un fichier temp pour éviter les refreshes répétés.
     """
     import time, requests
+    from base64 import b64encode
 
-    # Charger le token depuis le fichier temp (s'il existe et est valide)
-    if _ZOHO_JSON_PATH.exists():
-        data = json.loads(_ZOHO_JSON_PATH.read_text())
+    # Cache : réutiliser si valide
+    if _QBO_JSON_PATH.exists():
+        data = json.loads(_QBO_JSON_PATH.read_text())
         if data.get("expires_at", 0) > time.time() + 60:
             return data["access_token"]
 
-    # Refresh
-    refresh_token = os.environ.get("ZOHO_REFRESH_TOKEN", "")
-    client_id     = os.environ.get("ZOHO_CLIENT_ID", "")
-    client_secret = os.environ.get("ZOHO_CLIENT_SECRET", "")
+    client_id     = os.environ.get("QBO_CLIENT_ID", "")
+    client_secret = os.environ.get("QBO_CLIENT_SECRET", "")
+    refresh_token = os.environ.get("QBO_REFRESH_TOKEN", "")
 
-    if not all([refresh_token, client_id, client_secret]):
-        raise RuntimeError("Variables Zoho manquantes : ZOHO_REFRESH_TOKEN, ZOHO_CLIENT_ID ou ZOHO_CLIENT_SECRET")
+    if not all([client_id, client_secret, refresh_token]):
+        raise RuntimeError("Variables QBO manquantes : QBO_CLIENT_ID, QBO_CLIENT_SECRET ou QBO_REFRESH_TOKEN")
 
+    credentials = b64encode(f"{client_id}:{client_secret}".encode()).decode()
     resp = requests.post(
-        "https://accounts.zoho.ca/oauth/v2/token",
-        params={
-            "refresh_token": refresh_token,
-            "client_id":     client_id,
-            "client_secret": client_secret,
-            "grant_type":    "refresh_token",
+        "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+        headers={
+            "Authorization": f"Basic {credentials}",
+            "Content-Type":  "application/x-www-form-urlencoded",
         },
+        data={"grant_type": "refresh_token", "refresh_token": refresh_token},
         timeout=10,
     )
     resp.raise_for_status()
     token_data = resp.json()
 
     if "access_token" not in token_data:
-        raise RuntimeError(f"Zoho refresh failed: {token_data}")
+        raise RuntimeError(f"QBO token refresh failed: {token_data}")
 
     token_data["expires_at"] = time.time() + int(token_data.get("expires_in", 3600)) - 60
-    _ZOHO_JSON_PATH.write_text(json.dumps(token_data))
-    log.info("🔄 Token Zoho rafraîchi")
+    _QBO_JSON_PATH.write_text(json.dumps(token_data))
 
+    # Mettre à jour le refresh token si QBO en retourne un nouveau
+    if "refresh_token" in token_data:
+        os.environ["QBO_REFRESH_TOKEN"] = token_data["refresh_token"]
+
+    log.info("🔄 Token QBO rafraîchi")
     return token_data["access_token"]
 
 
