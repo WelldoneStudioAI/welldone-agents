@@ -192,7 +192,7 @@ def get_qbo_access_token() -> str:
 
 def get_notion_headers() -> dict:
     """Retourne les headers HTTP pour l'API Notion."""
-    token = os.environ.get("NOTION_TOKEN", "")
+    token = os.environ.get("NOTION_TOKEN", "") or os.environ.get("NOTION_API_KEY", "")
     if not token:
         raise RuntimeError("NOTION_TOKEN non défini")
     return {
