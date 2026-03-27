@@ -38,6 +38,7 @@ Agents disponibles:
 - analytics: {rapport, sources, keywords, opportunities} → GA4 + Search Console
 - zoho: {list, send} → factures Zoho Books
 - veille: {run} → veille de contenu hebdomadaire
+- voyage: {search} → recherche de vols optimaux (GPT-4o + Google Flights)
 - chat: {respond} → conversation générale, rédaction, brainstorm
 
 Pour "send" gmail, context doit avoir: to, subject, body (et optionnellement signature_type)
@@ -45,6 +46,7 @@ Pour "add" calendar, context doit avoir: title, date (YYYY-MM-DD), et optionnell
 Pour "task" notion, context doit avoir: title, et optionnellement priority, date, notes
 Pour "list" zoho, context peut avoir: search (nom client), status
 Pour "send" zoho, context doit avoir: search (nom client) ou invoice_id
+Pour "search" voyage, context doit avoir: query (description naturelle du voyage, ex: "YUL SXM 15 mai retour 22 mai")
 Pour "chat", context doit avoir: message (le texte original)
 
 RÈGLE: Retourne UNIQUEMENT le JSON, sans markdown, sans explication."""

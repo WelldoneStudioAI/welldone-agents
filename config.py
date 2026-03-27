@@ -54,5 +54,11 @@ GA4_PROPERTY_ID = os.environ.get("GA4_PROPERTY_ID", "522467276")
 GSC_SITE_STUDIO = "sc-domain:awelldone.com"
 GSC_SITE_ARCHI  = "sc-domain:welldone.archi"
 
+# ── OpenAI (Agent Voyage — GPT-4o + function calling) ────────────────────────
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+
+# ── SerpAPI (Google Flights pour agent voyage) ────────────────────────────────
+SERPAPI_KEY = os.environ.get("SERPAPI_KEY", "")
+
 # ── Timezone ──────────────────────────────────────────────────────────────────
 TIMEZONE = "America/Toronto"

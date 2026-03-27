@@ -129,6 +129,22 @@ def check_telegram() -> dict:
         return {"service": "Telegram Bot", "status": "error", "detail": str(e)}
 
 
+def check_openai() -> dict:
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+    serpapi_key = os.environ.get("SERPAPI_KEY", "")
+    if not openai_key:
+        return {"service": "OpenAI (voyage)", "status": "error", "detail": "OPENAI_API_KEY non défini"}
+    if not serpapi_key:
+        return {"service": "OpenAI (voyage)", "status": "error", "detail": "SERPAPI_KEY non défini"}
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=openai_key)
+        client.models.list()
+        return {"service": "OpenAI (voyage)", "status": "ok", "detail": "GPT-4o + SerpAPI configurés"}
+    except Exception as e:
+        return {"service": "OpenAI (voyage)", "status": "error", "detail": str(e)}
+
+
 # ── Registre des checks ────────────────────────────────────────────────────────
 CHECKS = {
     "gmail":     check_google_oauth,
@@ -138,6 +154,7 @@ CHECKS = {
     "zoho":      check_zoho,
     "anthropic": check_anthropic,
     "telegram":  check_telegram,
+    "openai":    check_openai,
 }
 
 
