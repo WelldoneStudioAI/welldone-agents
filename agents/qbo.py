@@ -385,6 +385,8 @@ class QBOAgent(BaseAgent):
                 "total":         None,
                 "inv_num":       None,
                 "tax_code_id":   None,
+                "signature":     QBO_BILLING_SIGNATURE,
+                "from_email":    GMAIL_BILLING_FROM,
             })
             return self.NEEDS_SERVICE
 

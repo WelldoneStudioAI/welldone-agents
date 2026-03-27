@@ -278,10 +278,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gère tous les callbacks des inline keyboards QBO."""
-    query   = update.callback_query
-    await query.answer()
+    query = update.callback_query
+    await query.answer()  # Toujours répondre en premier pour éviter le spinner
     user_id = update.effective_user.id
     data    = query.data
+    log.info(f"callback: user={user_id} data={data}")
+    try:
+        await _handle_callback_inner(update, context, query, user_id, data)
+    except Exception as e:
+        log.error(f"handle_callback error: {e}", exc_info=True)
+        try:
+            await query.message.reply_text(f"❌ Erreur interne : {e}")
+        except Exception:
+            pass
+
+
+async def _handle_callback_inner(update, context, query, user_id, data):
 
     # ── Créer brouillon ───────────────────────────────────────────────────────
     if data.startswith("qbo_draft_"):
