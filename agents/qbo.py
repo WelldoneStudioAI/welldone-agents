@@ -306,9 +306,11 @@ class QBOAgent(BaseAgent):
     name        = "qbo"
     description = "Facturation QuickBooks Online — créer clients, créer et envoyer des factures"
 
-    # Signal retourné à telegram.py pour déclencher le flux preview
+    # Signaux retournés à telegram.py pour déclencher le flux preview
     NEEDS_CONFIRMATION = "__QBO_NEEDS_CONFIRMATION__"
     NEEDS_SERVICE      = "__QBO_NEEDS_SERVICE__"
+
+
 
     @property
     def commands(self):
@@ -319,7 +321,7 @@ class QBOAgent(BaseAgent):
             "list":          self.list_invoices,
         }
 
-    async def create(self, context: dict | None = None, user_id: int = 0) -> str:
+    async def create(self, context: dict | None = None) -> str:
         """
         Prévisualise une facture et stocke l'état pending.
 
@@ -328,12 +330,14 @@ class QBOAgent(BaseAgent):
           amount (float)       ← montant HT
           description (str)    ← service ("?" pour afficher les pills)
           client_email (str)   ← [optionnel] email si le client n'existe pas encore
+          _user_id (int)       ← injecté par telegram.py pour le pending state
         """
         ctx          = context or {}
         client_name  = ctx.get("client", "").strip()
         amount       = float(ctx.get("amount", 0))
         description  = ctx.get("description", "?").strip()
         client_email = ctx.get("client_email", "").strip()
+        user_id      = int(ctx.get("_user_id", 0))
 
         if not client_name:
             return "❌ Paramètre 'client' manquant."

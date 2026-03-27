@@ -16,10 +16,14 @@ from config import TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USER_ID
 from agents.qbo import (
     store_pending, get_pending, clear_pending,
     execute_create, execute_send_direct,
-    _build_invoice_preview, _format_preview,
-    _next_invoice_number, _get_qbo_tax_code,
-    QBOAgent,
+    _format_preview, _next_invoice_number, _get_qbo_tax_code,
 )
+
+from agents.qbo import QBOAgent as _QBOAgent
+
+# Signaux retournés par qbo.create()
+_QBO_NEEDS_CONFIRMATION = _QBOAgent.NEEDS_CONFIRMATION
+_QBO_NEEDS_SERVICE      = _QBOAgent.NEEDS_SERVICE
 
 log = logging.getLogger(__name__)
 
@@ -236,15 +240,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Cas spécial QBO create → flux preview
     if agent_name == "qbo" and command == "create":
-        # Passer user_id à l'agent pour gérer le pending state
-        agents = discover_agents()
-        qbo_agent = agents.get("qbo")
-        if qbo_agent:
-            result = await qbo_agent.create(context=ctx, user_id=user_id)
-        else:
-            result = await dispatch(agent_name, command, ctx)
+        # Injecter user_id dans le context pour que l'agent puisse stocker le pending
+        ctx["_user_id"] = user_id
+        result = await dispatch(agent_name, command, ctx)
 
-        if result == QBOAgent.NEEDS_SERVICE:
+        if result == _QBO_NEEDS_SERVICE:
             # Afficher les pills de sélection de service
             pending = get_pending(user_id)
             await update.message.reply_text(
@@ -255,7 +255,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        if result == QBOAgent.NEEDS_CONFIRMATION:
+        if result == _QBO_NEEDS_CONFIRMATION:
             await _show_qbo_preview(update, user_id)
             return
 
