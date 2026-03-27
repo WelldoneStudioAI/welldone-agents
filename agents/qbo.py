@@ -168,7 +168,7 @@ def _build_invoice_preview(
 
 
 def _format_preview(data: dict) -> str:
-    """Formate la prévisualisation en texte Telegram Markdown."""
+    """Formate la prévisualisation en texte Telegram Markdown standard."""
     return (
         f"📋 *Prévisualisation de la facture*\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -176,8 +176,8 @@ def _format_preview(data: dict) -> str:
         f"📧 Email : {data['email']}\n"
         f"📋 Service : {data['service']}\n"
         f"💵 Montant HT : {data['amount']:,.2f} $\n"
-        f"🏦 TPS \\(5 %\\) : {data['tps']:,.2f} $\n"
-        f"🏦 TVQ \\(9,975 %\\) : {data['tvq']:,.2f} $\n"
+        f"🏦 TPS (5%) : {data['tps']:,.2f} $\n"
+        f"🏦 TVQ (9,975%) : {data['tvq']:,.2f} $\n"
         f"💰 *Total TTC : {data['total']:,.2f} $*\n"
         f"📅 Paiement : Dû à réception\n"
         f"📝 N° facture : {data['inv_num']}\n"

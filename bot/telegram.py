@@ -63,21 +63,16 @@ def _is_allowed(update: Update) -> bool:
 
 
 async def _send(update: Update, text: str):
-    """Envoie un message en gérant les limites de taille Telegram (4096 chars)."""
-    if len(text) <= 4096:
-        await update.effective_message.reply_text(text, parse_mode="MarkdownV2")
-        return
-    for i in range(0, len(text), 4000):
-        await update.effective_message.reply_text(text[i:i+4000], parse_mode="MarkdownV2")
-
-
-async def _send_md(update: Update, text: str):
-    """Envoie en Markdown standard (pour messages simples sans caractères spéciaux)."""
+    """Envoie un message en Markdown, en gérant les limites de taille Telegram (4096 chars)."""
     if len(text) <= 4096:
         await update.effective_message.reply_text(text, parse_mode="Markdown")
         return
     for i in range(0, len(text), 4000):
         await update.effective_message.reply_text(text[i:i+4000], parse_mode="Markdown")
+
+
+# Alias pour la lisibilité
+_send_md = _send
 
 
 # ── Preview QBO ───────────────────────────────────────────────────────────────
@@ -111,7 +106,7 @@ async def _show_qbo_preview(update: Update, user_id: int):
 
     await update.message.reply_text(
         preview_text + tax_warning,
-        parse_mode="MarkdownV2",
+        parse_mode="Markdown",
         reply_markup=keyboard,
     )
 
@@ -361,7 +356,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text(
             preview_text + tax_warning,
-            parse_mode="MarkdownV2",
+            parse_mode="Markdown",
             reply_markup=keyboard,
         )
 
