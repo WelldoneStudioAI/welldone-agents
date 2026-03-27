@@ -69,7 +69,7 @@ def _search_flights(departure_id: str, arrival_id: str, outbound_date: str,
         "outbound_date":  outbound_date,
         "currency":       currency,
         "hl":             "fr",
-        "type":           "2" if return_date else "1",
+        "type":           "1" if return_date else "2",  # 1=aller-retour, 2=aller simple
         "api_key":        serpapi_key,
     }
     if return_date:
