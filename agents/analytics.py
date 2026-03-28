@@ -128,7 +128,7 @@ class AnalyticsAgent(BaseAgent):
             ).execute().get("rows", [])
 
             opps = sorted(
-                [r for r in rows if 4 <= r["position"] <= 20 and r["impressions"] >= 10],
+                [r for r in rows if 4 <= r["position"] <= 20 and r["impressions"] >= 5],
                 key=lambda x: x["impressions"], reverse=True
             )[:10]
 
