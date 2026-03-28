@@ -366,19 +366,59 @@ async def framer_delete_item(item_id: str) -> dict:
 # Images libres de droits
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Style visuel Welldone Studio — anti-stock, éditorial / documentaire / authentique
+# Ce suffix est ajouté à chaque query Unsplash pour orienter les résultats
+_UNSPLASH_STYLE = "editorial authentic candid natural light"
+
+# Paramètres Unsplash qui filtrent vers des photos premium non-stock
+_UNSPLASH_PARAMS = "per_page=5&orientation=landscape&content_filter=high&order_by=relevant"
+
+
+def _trigger_unsplash_download(download_location: str) -> None:
+    """
+    Déclenche l'endpoint de download Unsplash — obligatoire selon leurs guidelines API.
+    https://help.unsplash.com/en/articles/2511258
+    """
+    if not download_location or not UNSPLASH_ACCESS_KEY:
+        return
+    try:
+        req = urllib.request.Request(
+            download_location,
+            headers={"Authorization": f"Client-ID {UNSPLASH_ACCESS_KEY}"},
+        )
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass
+
+
 def _search_unsplash(queries: list[str]) -> list[dict]:
+    """
+    Recherche Unsplash avec style éditorial — évite les clichés stock.
+    Utilise content_filter=high + suffix de style sur chaque query.
+    Déclenche le tracking download (requis par l'API Unsplash).
+    """
     results = []
-    for query in queries[:3]:
+    for query in queries[:4]:
         try:
-            q   = urllib.parse.quote(query)
-            url = f"https://api.unsplash.com/search/photos?query={q}&per_page=3&orientation=landscape"
-            req = urllib.request.Request(
+            # Ajouter le style suffix pour guider vers photos authentiques
+            styled = f"{query} {_UNSPLASH_STYLE}"
+            q      = urllib.parse.quote(styled)
+            url    = f"https://api.unsplash.com/search/photos?query={q}&{_UNSPLASH_PARAMS}"
+            req    = urllib.request.Request(
                 url, headers={"Authorization": f"Client-ID {UNSPLASH_ACCESS_KEY}"})
-            resp = urllib.request.urlopen(req, timeout=10)
-            data = json.loads(resp.read())
+            resp   = urllib.request.urlopen(req, timeout=12)
+            data   = json.loads(resp.read())
+
             for photo in data.get("results", []):
-                results.append({"src": photo["urls"]["regular"],
-                                 "alt": photo.get("alt_description") or query})
+                # Préférer `full` pour la qualité, `regular` comme fallback
+                src = photo["urls"].get("full") or photo["urls"]["regular"]
+                alt = photo.get("alt_description") or photo.get("description") or query
+                credit = f"Photo by {photo['user']['name']} on Unsplash"
+
+                # Tracking download (guidelines Unsplash)
+                _trigger_unsplash_download(photo.get("links", {}).get("download_location", ""))
+
+                results.append({"src": src, "alt": alt, "credit": credit})
                 if len(results) >= 8:
                     return results
         except Exception as e:
@@ -436,13 +476,19 @@ IDENTITÉ DE MARQUE :
 - Client cible : entrepreneurs et PME du Québec
 - Tagline : "L'image comme actif stratégique"
 
-STYLE : Français québécois professionnel, ton de journaliste d'affaires.
+STYLE TEXTE : Français québécois professionnel, ton de journaliste d'affaires.
 RÈGLES ABSOLUES D'ÉCRITURE :
 1. Paragraphes LONGS et coulants — minimum 5 phrases par paragraphe, sans saut de ligne interne.
 2. JAMAIS de double saut de ligne entre les phrases. Texte continu, dense, fluide.
 3. Transitions naturelles entre les phrases : "De plus,", "C'est pourquoi,", "En pratique,", etc.
 4. Toujours ramener à l'impact business. Exemples concrets québécois. Chiffres si possible.
 5. Écrire comme un humain expert, PAS comme une liste de bullet points déguisés en paragraphes.
+
+STYLE IMAGES (image_queries) : 4 mots-clés courts en ANGLAIS pour Unsplash.
+- Style Welldone Studio : éditorial, documentaire, authentique, lumière naturelle
+- ✅ FAVORISE : "restaurant kitchen fire", "chef plating close up", "café interior morning light", "entrepreneur desk candid"
+- ❌ ÉVITE : "business handshake", "smiling team", "corporate meeting", "stock professional"
+- Queries spécifiques au SUJET de l'article (restaurant, dentaire, branding, etc.)
 
 SUJET : {sujet}
 
@@ -458,8 +504,8 @@ Retourne UNIQUEMENT ce JSON (aucun texte avant/après, aucun markdown) :
   "Type de Mandat": "Type de contenu (ex: Article SEO, Guide pratique, Étude de cas, Analyse)",
   "Objectif Stratégique": "But marketing (ex: Acquisition PME Montréal, Notoriété SEO, Conversion)",
 
-  "image_queries": ["english keyword 1 for unsplash", "english keyword 2", "english keyword 3"],
-  "Hero-Image:alt": "Description de l'image hero idéale pour ce sujet",
+  "image_queries": ["query 1 style éditorial", "query 2", "query 3", "query 4"],
+  "Hero-Image:alt": "Description précise de l'image hero idéale — sujet, ambiance, cadrage",
 
   "Heading1-Titre": "Titre section 1 — contexte et problématique concrète",
   "Heading1-Text": "Texte section 1 (380-440 mots). Établit le problème business réel. Exemples. Statistiques si pertinent.",
