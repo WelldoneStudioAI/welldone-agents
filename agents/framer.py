@@ -20,6 +20,7 @@ import re
 import urllib.request
 import urllib.error
 import urllib.parse
+from datetime import date as _date
 
 try:
     import websockets
@@ -622,7 +623,10 @@ class FramerAgent(BaseAgent):
                 }
 
         # ── 3. Construire le fieldData Framer (IDs exacts) ─────────────────────
-        slug       = _make_slug(article.get("slug") or article.get("Title") or sujet)
+        # Suffixe MMDD pour unicité des slugs (empêche "Duplicate slug" sur même sujet)
+        _date_suffix = _date.today().strftime("%m%d")
+        slug_base  = _make_slug(article.get("slug") or article.get("Title") or sujet)
+        slug       = f"{slug_base[:74]}-{_date_suffix}"   # max 80 chars
         field_data: dict = {}
 
         for col_name, meta in FIELD_MAP.items():

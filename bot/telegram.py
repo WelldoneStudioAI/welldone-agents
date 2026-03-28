@@ -238,8 +238,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if reply:
         await update.message.reply_text(reply)
 
-    # Pour les agents lents (voyage), maintenir l'indicateur de frappe
-    SLOW_AGENTS = {"voyage"}
+    # Messages de progression pour les opérations longues (envoyés immédiatement)
+    _PROGRESS = {
+        ("framer",  "rédiger"):   "✍️ Je génère l'article avec Claude puis je le pousse dans Framer...\n_(1 à 2 minutes — je te confirme quand c'est fait)_",
+        ("framer",  "liste"):     "📋 Connexion à Framer CMS en cours...",
+        ("framer",  "supprimer"): "🗑️ Suppression en cours...",
+        ("voyage",  None):        "✈️ Recherche de vols en cours... _(jusqu'à 60s)_",
+        ("veille",  None):        "🔍 Veille en cours...",
+        ("analytics", None):      "📊 Récupération des données Analytics...",
+    }
+    progress_msg = _PROGRESS.get((agent_name, command)) or _PROGRESS.get((agent_name, None))
+    if progress_msg and agent_name != "chat":
+        await update.message.reply_text(progress_msg, parse_mode="Markdown")
+
+    # Agents lents — maintenir l'indicateur de frappe (···)
+    SLOW_AGENTS = {"voyage", "framer", "veille", "analytics"}
     if agent_name in SLOW_AGENTS:
         import asyncio as _asyncio
 
