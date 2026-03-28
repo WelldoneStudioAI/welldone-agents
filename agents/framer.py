@@ -33,7 +33,7 @@ except ImportError:
 from agents._base import BaseAgent
 from core.brain import get_client
 from config import (CLAUDE_MODEL, FRAMER_API_KEY, FRAMER_COLLECTION_ID,
-                    FRAMER_PROJECTS_COLLECTION_ID, UNSPLASH_ACCESS_KEY)
+                    FRAMER_PROJECTS_COLLECTION_ID, FRAMER_STAGING_URL, UNSPLASH_ACCESS_KEY)
 
 log = logging.getLogger(__name__)
 
@@ -857,7 +857,13 @@ class FramerAgent(BaseAgent):
                 f"🔍 Vérifie FRAMER_API_KEY dans Railway."
             )
 
-        # ── 5. Publier le projet (rend l'article accessible immédiatement) ──────
+        # ── 5. Publier vers le site staging (framer.website) ──────────────────
+        img_count   = len([f for f in IMAGE_FIELDS if article.get(f)])
+        img_src     = "Portfolio Welldone" if FRAMER_PROJECTS_COLLECTION_ID else (
+                      "Unsplash" if UNSPLASH_ACCESS_KEY else "Picsum")
+        editor_url  = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
+        staging_url = FRAMER_STAGING_URL.rstrip("/") if FRAMER_STAGING_URL else ""
+
         pub_ok  = False
         pub_err = ""
         try:
@@ -869,29 +875,33 @@ class FramerAgent(BaseAgent):
             pub_err = str(e)
             log.warning(f"framer.rediger: publish failed: {e}")
 
-        img_count = len([f for f in IMAGE_FIELDS if article.get(f)])
-        img_src   = "Portfolio Welldone" if FRAMER_PROJECTS_COLLECTION_ID else (
-                    "Unsplash" if UNSPLASH_ACCESS_KEY else "Picsum")
-        live_url  = f"https://awelldone.studio/journal/{slug}"
-
-        if pub_ok:
+        if pub_ok and staging_url:
+            preview_url = f"{staging_url}/journal/{slug}"
             return (
-                f"✅ *Article publié sur Welldone Studio !*\n\n"
+                f"✅ *Article publié sur le site staging !*\n\n"
                 f"📰 *{titre}*\n"
                 f"📋 {len(field_data)} champs · 🖼️ {img_count} images ({img_src})\n\n"
-                f"🔗 [Voir l'article]({live_url})\n"
-                f"`{live_url}`"
+                f"🔗 [Voir sur le staging]({preview_url})\n"
+                f"`{preview_url}`\n\n"
+                f"_(Pour mettre en ligne sur awelldone.studio : publie depuis Framer Editor)_"
+            )
+        elif pub_ok:
+            # Staging URL pas configurée — donner lien editor
+            return (
+                f"✅ *Article publié dans Framer !*\n\n"
+                f"📰 *{titre}*\n"
+                f"📋 {len(field_data)} champs · 🖼️ {img_count} images ({img_src})\n\n"
+                f"👉 [Voir dans Framer Editor]({editor_url})\n\n"
+                f"💡 Ajoute `FRAMER_STAGING_URL` dans Railway pour avoir un lien de prévisualisation direct.\n"
+                f"_(Framer → ton projet → Settings → Domains → subdomain)_"
             )
         else:
-            # Article créé mais publish a échoué — donner le lien Framer Editor
-            editor_url = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
             return (
                 f"✅ *Article créé — publication manuelle requise*\n\n"
                 f"📰 *{titre}*\n"
                 f"📋 {len(field_data)} champs · 🖼️ {img_count} images ({img_src})\n\n"
                 f"⚠️ Auto-publish échoué : {pub_err[:100]}\n"
-                f"👉 [Ouvrir Framer Editor pour publier]({editor_url})\n"
-                f"🔗 URL après publish: `{live_url}`"
+                f"👉 [Ouvrir Framer Editor]({editor_url}) → bouton Publish"
             )
 
     async def liste(self, context: dict | None = None) -> str:
