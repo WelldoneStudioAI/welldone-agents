@@ -265,6 +265,10 @@ class FramerClient:
     async def add_items(self, collection_id: str, items: list):
         return await self.invoke("addCollectionItems2", collection_id, items, timeout=120)
 
+    async def publish(self):
+        """Tente de publier le projet (best-effort — lève une exception si non dispo)."""
+        return await self.invoke("publishCurrentProject", timeout=60)
+
     async def remove_items(self, collection_id: str, item_ids: list):
         """item_ids : liste de dicts {id: str}"""
         return await self.invoke("removeCollectionItems", collection_id, item_ids, timeout=20)
@@ -318,15 +322,30 @@ async def framer_list_items() -> dict:
 
 
 async def framer_add_item(slug: str, field_data: dict) -> dict:
-    """Retourne {ok, message} ou {ok:False, error}."""
+    """Retourne {ok, message, published} ou {ok:False, error}."""
+    published = False
+
     async def _do():
+        nonlocal published
         async with FramerClient(FRAMER_API_KEY) as c:
-            return await c.add_items(FRAMER_COLLECTION_ID, [{"slug": slug, "fieldData": field_data}])
+            result = await c.add_items(
+                FRAMER_COLLECTION_ID, [{"slug": slug, "fieldData": field_data}]
+            )
+            log.info(f"framer addCollectionItems2 response: {str(result)[:300]}")
+            # Tentative de publication immédiate (best-effort)
+            try:
+                pub_result = await c.publish()
+                log.info(f"framer publishCurrentProject: {str(pub_result)[:200]}")
+                published = True
+            except Exception as pub_err:
+                log.warning(f"framer publish non disponible: {pub_err}")
+            return result
 
     res = await _framer_op(_do())
     if not res["ok"]:
         return res
-    return {"ok": True, "message": "Article créé dans Framer CMS", "result": res["data"]}
+    return {"ok": True, "message": "Article créé dans Framer CMS",
+            "published": published, "result": res["data"]}
 
 
 async def framer_delete_item(item_id: str) -> dict:
@@ -575,12 +594,15 @@ class FramerAgent(BaseAgent):
         img_count = len([f for f in IMAGE_FIELDS if article.get(f)])
 
         if result.get("ok"):
+            is_published = result.get("published", False)
+            pub_line = "🌐 Site republié automatiquement" if is_published else "⚠️ Article en brouillon — publie le site dans Framer pour le rendre visible"
             return (
-                f"✅ *Article publié dans Framer CMS*\n\n"
+                f"✅ *Article créé dans Framer CMS*\n\n"
                 f"📰 *{titre}*\n"
                 f"🔗 Slug: `{slug}`\n"
                 f"📋 {len(field_data)} champs texte remplis\n"
-                f"🖼️ Images : à ajouter via l'éditeur Framer\n\n"
+                f"🖼️ Images : à ajouter via l'éditeur Framer\n"
+                f"{pub_line}\n\n"
                 f"👉 awelldone.studio/journal/{slug}"
             )
         else:
