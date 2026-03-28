@@ -304,6 +304,10 @@ async def framer_list_items() -> dict:
         return res
 
     raw_items = res["data"] or []
+    # Log la structure du premier item pour diagnostiquer le champ "published"
+    if raw_items and isinstance(raw_items, list) and raw_items[0]:
+        sample = {k: v for k, v in raw_items[0].items() if k != "fieldData"}
+        log.info(f"framer item sample (sans fieldData): {sample}")
     simplified = []
     for item in (raw_items if isinstance(raw_items, list) else []):
         fd    = item.get("fieldData") or {}
@@ -312,11 +316,20 @@ async def framer_list_items() -> dict:
             if isinstance(field, dict) and field.get("type") == "string" and field.get("value"):
                 title = field["value"]
                 break
+        # Framer: "staged"=True → brouillon, "staged"=False → publié
+        # Si le champ n'existe pas on affiche "?" plutôt que "Brouillon" par défaut
+        staged = item.get("staged")
+        if staged is True:
+            pub_state = False
+        elif staged is False:
+            pub_state = True
+        else:
+            pub_state = item.get("published")   # fallback
         simplified.append({
             "id":        item.get("id"),
             "slug":      item.get("slug"),
             "title":     title or item.get("slug") or "(sans titre)",
-            "published": item.get("published", False),
+            "published": pub_state,             # None = inconnu
         })
     return {"ok": True, "items": simplified, "count": len(simplified)}
 
@@ -630,7 +643,8 @@ class FramerAgent(BaseAgent):
 
         lines = [f"📚 *Articles Framer CMS — {len(items)} au total:*\n"]
         for item in items[:25]:
-            status = "🟢 Publié" if item.get("published") else "📝 Brouillon"
+            pub = item.get("published")
+            status = "🟢 Publié" if pub is True else ("📝 Brouillon" if pub is False else "❓ État?")
             titre  = item.get("title", "Sans titre")
             iid    = item.get("id", "")
             lines.append(f"{status} *{titre}*\n  ID: `{iid}`")
