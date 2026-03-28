@@ -335,30 +335,19 @@ async def framer_list_items() -> dict:
 
 
 async def framer_add_item(slug: str, field_data: dict) -> dict:
-    """Retourne {ok, message, published} ou {ok:False, error}."""
-    published = False
-
+    """Retourne {ok, message} ou {ok:False, error}. Item créé en brouillon (staging)."""
     async def _do():
-        nonlocal published
         async with FramerClient(FRAMER_API_KEY) as c:
             result = await c.add_items(
                 FRAMER_COLLECTION_ID, [{"slug": slug, "fieldData": field_data}]
             )
             log.info(f"framer addCollectionItems2 response: {str(result)[:300]}")
-            # Tentative de publication immédiate (best-effort)
-            try:
-                pub_result = await c.publish()
-                log.info(f"framer publishCurrentProject: {str(pub_result)[:200]}")
-                published = True
-            except Exception as pub_err:
-                log.warning(f"framer publish non disponible: {pub_err}")
             return result
 
     res = await _framer_op(_do())
     if not res["ok"]:
         return res
-    return {"ok": True, "message": "Article créé dans Framer CMS",
-            "published": published, "result": res["data"]}
+    return {"ok": True, "message": "Article créé dans Framer CMS", "result": res["data"]}
 
 
 async def framer_delete_item(item_id: str) -> dict:
@@ -398,12 +387,18 @@ def _search_unsplash(queries: list[str]) -> list[dict]:
 
 
 def _fallback_images(queries: list[str]) -> list[dict]:
-    """LoremFlickr — photos CC libres de droits, aucune clé requise."""
+    """
+    Lorem Picsum — photos gratuites, URLs directes CDN Fastly sans redirect.
+    Seed basé sur la query → image cohérente/reproductible.
+    """
     results = []
-    for i in range(8):
-        q = queries[i % len(queries)].replace(" ", ",") if queries else "business,montreal"
-        results.append({"src": f"https://loremflickr.com/1200/800/{q}?lock={i + 1}",
-                         "alt": q.replace(",", " ")})
+    seeds = [abs(hash(q + str(i))) % 1000 for i, q in enumerate((queries * 3)[:8])]
+    for i, seed in enumerate(seeds[:8]):
+        q = queries[i % len(queries)] if queries else "business"
+        results.append({
+            "src": f"https://picsum.photos/seed/{seed}/1200/800",
+            "alt": q,
+        })
     return results
 
 
@@ -441,8 +436,13 @@ IDENTITÉ DE MARQUE :
 - Client cible : entrepreneurs et PME du Québec
 - Tagline : "L'image comme actif stratégique"
 
-STYLE : Français québécois professionnel. Direct, concret, paragraphes courts (3-4 lignes max).
-Toujours ramener à l'impact business. Exemples concrets. Chiffres si possible.
+STYLE : Français québécois professionnel, ton de journaliste d'affaires.
+RÈGLES ABSOLUES D'ÉCRITURE :
+1. Paragraphes LONGS et coulants — minimum 5 phrases par paragraphe, sans saut de ligne interne.
+2. JAMAIS de double saut de ligne entre les phrases. Texte continu, dense, fluide.
+3. Transitions naturelles entre les phrases : "De plus,", "C'est pourquoi,", "En pratique,", etc.
+4. Toujours ramener à l'impact business. Exemples concrets québécois. Chiffres si possible.
+5. Écrire comme un humain expert, PAS comme une liste de bullet points déguisés en paragraphes.
 
 SUJET : {sujet}
 
@@ -584,13 +584,15 @@ class FramerAgent(BaseAgent):
             ftype = meta["type"]
 
             if ftype == "image":
-                # Images OMISES volontairement : Framer tente de télécharger chaque URL
-                # côté serveur → timeout. Les images s'ajoutent via l'éditeur Framer.
-                pass
+                val = article.get(col_name)
+                if isinstance(val, dict) and val.get("src"):
+                    field_data[fid] = {"value": val["src"], "type": "image"}
             elif ftype == "formattedText":
                 val = article.get(col_name, "")
                 if val:
-                    field_data[fid] = {"value": f"<p>{val}</p>", "type": "formattedText"}
+                    # Strip newlines — Framer gère la mise en page via CSS
+                    val_clean = re.sub(r"\n+", " ", val).strip()
+                    field_data[fid] = {"value": f"<p>{val_clean}</p>", "type": "formattedText"}
             elif ftype == "link":
                 val = article.get(col_name, "")
                 if val:
@@ -598,7 +600,9 @@ class FramerAgent(BaseAgent):
             else:
                 val = article.get(col_name, "")
                 if val:
-                    field_data[fid] = {"value": str(val), "type": "string"}
+                    # Strip newlines dans les champs string (évite double-spacing dans Framer)
+                    val_clean = re.sub(r"\n+", " ", str(val)).strip()
+                    field_data[fid] = {"value": val_clean, "type": "string"}
 
         # ── 4. Push vers Framer CMS via WebSocket Python ───────────────────────
         log.info(f"framer.rediger: push slug={slug} fields={len(field_data)}")
@@ -607,16 +611,16 @@ class FramerAgent(BaseAgent):
         img_count = len([f for f in IMAGE_FIELDS if article.get(f)])
 
         if result.get("ok"):
-            is_published = result.get("published", False)
-            pub_line = "🌐 Site republié automatiquement" if is_published else "⚠️ Article en brouillon — publie le site dans Framer pour le rendre visible"
+            img_count = len([f for f in IMAGE_FIELDS if article.get(f)])
+            img_src   = "Unsplash" if UNSPLASH_ACCESS_KEY else "Picsum"
             return (
-                f"✅ *Article créé dans Framer CMS*\n\n"
+                f"✅ *Article créé en brouillon dans Framer CMS*\n\n"
                 f"📰 *{titre}*\n"
                 f"🔗 Slug: `{slug}`\n"
-                f"📋 {len(field_data)} champs texte remplis\n"
-                f"🖼️ Images : à ajouter via l'éditeur Framer\n"
-                f"{pub_line}\n\n"
-                f"👉 awelldone.studio/journal/{slug}"
+                f"📋 {len(field_data)} champs remplis"
+                + (f" · 🖼️ {img_count} images ({img_src})" if img_count else "") + "\n\n"
+                f"👉 Pour publier : Framer Editor → bouton **Publish**\n"
+                f"🔗 awelldone.studio/journal/{slug}"
             )
         else:
             err = result.get("error", "Inconnu")
