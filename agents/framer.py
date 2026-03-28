@@ -269,10 +269,6 @@ class FramerClient:
     async def add_items(self, collection_id: str, items: list):
         return await self.invoke("addCollectionItems2", collection_id, items, timeout=120)
 
-    async def publish(self):
-        """Tente de publier le projet (best-effort — lève une exception si non dispo)."""
-        return await self.invoke("publishCurrentProject", timeout=60)
-
     async def remove_items(self, collection_id: str, item_ids: list):
         """item_ids : liste de dicts {id: str}"""
         return await self.invoke("removeCollectionItems", collection_id, item_ids, timeout=20)
@@ -857,52 +853,32 @@ class FramerAgent(BaseAgent):
                 f"🔍 Vérifie FRAMER_API_KEY dans Railway."
             )
 
-        # ── 5. Publier vers le site staging (framer.website) ──────────────────
-        img_count   = len([f for f in IMAGE_FIELDS if article.get(f)])
+        # ── 5. Message de confirmation avec liens utiles ───────────────────────
+        img_count   = len([f for f in IMAGE_FIELDS if field_data.get(FIELD_MAP[f]["id"])])
         img_src     = "Portfolio Welldone" if FRAMER_PROJECTS_COLLECTION_ID else (
                       "Unsplash" if UNSPLASH_ACCESS_KEY else "Picsum")
         editor_url  = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
         staging_url = FRAMER_STAGING_URL.rstrip("/") if FRAMER_STAGING_URL else ""
+        prod_url    = f"https://awelldone.studio/journal/{slug}"
 
-        pub_ok  = False
-        pub_err = ""
-        try:
-            async with FramerClient(FRAMER_API_KEY) as c:
-                await c.publish()
-            pub_ok = True
-            log.info("framer.rediger: publish OK")
-        except Exception as e:
-            pub_err = str(e)
-            log.warning(f"framer.rediger: publish failed: {e}")
-
-        if pub_ok and staging_url:
+        if staging_url:
             preview_url = f"{staging_url}/journal/{slug}"
-            return (
-                f"✅ *Article publié sur le site staging !*\n\n"
-                f"📰 *{titre}*\n"
-                f"📋 {len(field_data)} champs · 🖼️ {img_count} images ({img_src})\n\n"
-                f"🔗 [Voir sur le staging]({preview_url})\n"
-                f"`{preview_url}`\n\n"
-                f"_(Pour mettre en ligne sur awelldone.studio : publie depuis Framer Editor)_"
-            )
-        elif pub_ok:
-            # Staging URL pas configurée — donner lien editor
-            return (
-                f"✅ *Article publié dans Framer !*\n\n"
-                f"📰 *{titre}*\n"
-                f"📋 {len(field_data)} champs · 🖼️ {img_count} images ({img_src})\n\n"
-                f"👉 [Voir dans Framer Editor]({editor_url})\n\n"
-                f"💡 Ajoute `FRAMER_STAGING_URL` dans Railway pour avoir un lien de prévisualisation direct.\n"
-                f"_(Framer → ton projet → Settings → Domains → subdomain)_"
+            publish_note = (
+                f"👀 [Prévisualiser sur le staging]({preview_url})\n"
+                f"_(Publie depuis Framer Editor pour mettre sur awelldone.studio)_"
             )
         else:
-            return (
-                f"✅ *Article créé — publication manuelle requise*\n\n"
-                f"📰 *{titre}*\n"
-                f"📋 {len(field_data)} champs · 🖼️ {img_count} images ({img_src})\n\n"
-                f"⚠️ Auto-publish échoué : {pub_err[:100]}\n"
-                f"👉 [Ouvrir Framer Editor]({editor_url}) → bouton Publish"
+            publish_note = (
+                f"👉 [Ouvrir Framer Editor → Publish]({editor_url})\n"
+                f"🔗 URL après publish : `{prod_url}`"
             )
+
+        return (
+            f"✅ *Article prêt dans Framer CMS !*\n\n"
+            f"📰 *{titre}*\n"
+            f"📋 {len(field_data)} champs · 🖼️ {img_count} images ({img_src})\n\n"
+            + publish_note
+        )
 
     async def liste(self, context: dict | None = None) -> str:
         """Liste les articles existants dans Framer CMS."""
@@ -942,19 +918,12 @@ class FramerAgent(BaseAgent):
 
 
     async def publier(self, context: dict | None = None) -> str:
-        """Publie le projet Framer — rend tous les brouillons visibles en ligne."""
-        if not FRAMER_API_KEY:
-            return "❌ `FRAMER_API_KEY` manquant dans Railway."
-        try:
-            async with FramerClient(FRAMER_API_KEY) as c:
-                await c.publish()
-            return (
-                "✅ *Projet publié sur awelldone.studio !*\n\n"
-                "Tous les articles en attente sont maintenant en ligne.\n"
-                "🔗 https://awelldone.studio/journal"
-            )
-        except Exception as e:
-            return f"❌ Erreur publication: {e}"
+        """Lien direct vers Framer Editor pour publier."""
+        editor_url = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
+        return (
+            f"👉 [Ouvrir Framer Editor]({editor_url})\n\n"
+            f"Clique le bouton **Publish** en haut à droite pour mettre le site à jour sur awelldone.studio."
+        )
 
 
 agent = FramerAgent()

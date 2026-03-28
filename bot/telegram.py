@@ -134,6 +134,13 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _send_md(update, await help_text())
 
 
+async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update): return
+    from datetime import datetime
+    now = datetime.now().strftime("%H:%M:%S")
+    await update.message.reply_text(f"🟢 En ligne — {now}")
+
+
 async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update): return
     await update.message.reply_text("⏳ Vérification des services...")
@@ -433,6 +440,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("start",  cmd_start))
     app.add_handler(CommandHandler("help",   cmd_help))
     app.add_handler(CommandHandler("reset",  cmd_reset))
+    app.add_handler(CommandHandler("ping",   cmd_ping))
     app.add_handler(CommandHandler("health", cmd_health))
 
     # Commandes agents (enregistrées dynamiquement après découverte)
