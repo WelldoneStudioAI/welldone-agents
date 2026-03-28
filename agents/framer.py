@@ -30,7 +30,8 @@ except ImportError:
 
 from agents._base import BaseAgent
 from core.brain import get_client
-from config import CLAUDE_MODEL, FRAMER_API_KEY, FRAMER_COLLECTION_ID, UNSPLASH_ACCESS_KEY
+from config import (CLAUDE_MODEL, FRAMER_API_KEY, FRAMER_COLLECTION_ID,
+                    FRAMER_PROJECTS_COLLECTION_ID, UNSPLASH_ACCESS_KEY)
 
 log = logging.getLogger(__name__)
 
@@ -364,6 +365,99 @@ async def framer_delete_item(item_id: str) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Option B — Photos du portfolio Welldone (prioritaires sur Unsplash)
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def framer_get_collections() -> dict:
+    """Liste toutes les collections du projet Framer avec leurs IDs et noms."""
+    async def _do():
+        async with FramerClient(FRAMER_API_KEY) as c:
+            return await c.get_collections()
+
+    res = await _framer_op(_do())
+    if not res["ok"]:
+        return res
+
+    raw = res["data"] or []
+    cols = []
+    for c in (raw if isinstance(raw, list) else []):
+        cols.append({
+            "id":    c.get("id", "?"),
+            "name":  c.get("name", "Sans nom"),
+            "count": c.get("itemCount") or "?",
+        })
+    return {"ok": True, "collections": cols}
+
+
+async def _get_portfolio_images(sector: str, max_images: int = 8) -> list[dict]:
+    """
+    Cherche des images dans la collection Projets Framer.
+
+    Priorité :
+      1. Projets dont un champ string contient un mot-clé du secteur
+      2. N'importe quel projet (tous secteurs confondus)
+    Retourne [] si FRAMER_PROJECTS_COLLECTION_ID non configuré.
+    """
+    if not FRAMER_PROJECTS_COLLECTION_ID:
+        return []
+
+    try:
+        async with FramerClient(FRAMER_API_KEY) as c:
+            items = await c.get_items(FRAMER_PROJECTS_COLLECTION_ID)
+    except Exception as e:
+        log.warning(f"portfolio get_items: {e}")
+        return []
+
+    if not items or not isinstance(items, list):
+        return []
+
+    # Mots-clés du secteur pour le matching (ex: "restaurant", "dentaire", "corporate")
+    keywords = [w.lower() for w in re.split(r"[\s,;/]+", sector) if len(w) > 3]
+
+    matched_imgs: list[dict] = []
+    other_imgs:   list[dict] = []
+
+    for item in items:
+        fd = item.get("fieldData") or {}
+
+        # Vérifier si ce projet est dans le bon secteur
+        project_text = " ".join(
+            str(f.get("value", "")).lower()
+            for f in fd.values()
+            if isinstance(f, dict) and f.get("type") == "string"
+        )
+        is_match = any(kw in project_text for kw in keywords) if keywords else False
+
+        # Extraire toutes les URLs d'images du projet
+        project_imgs: list[dict] = []
+        for fid, field in fd.items():
+            if not isinstance(field, dict) or field.get("type") != "image":
+                continue
+            src = field.get("value")
+            if isinstance(src, str) and src.startswith("http"):
+                project_imgs.append({
+                    "src": src,
+                    "alt": f"Photo Welldone Studio — {item.get('slug', '')}",
+                    "credit": "Welldone Studio",
+                })
+            elif isinstance(src, dict) and isinstance(src.get("src"), str):
+                project_imgs.append({
+                    "src": src["src"],
+                    "alt": src.get("alt") or f"Photo Welldone Studio — {item.get('slug', '')}",
+                    "credit": "Welldone Studio",
+                })
+
+        if is_match:
+            matched_imgs.extend(project_imgs)
+        else:
+            other_imgs.extend(project_imgs)
+
+    result = matched_imgs + other_imgs
+    log.info(f"portfolio: {len(matched_imgs)} images secteur + {len(other_imgs)} autres → {len(result)} total")
+    return result[:max_images]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Images libres de droits
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -443,12 +537,28 @@ def _fallback_images(queries: list[str]) -> list[dict]:
     return results
 
 
-def _get_images(queries: list[str]) -> list[dict]:
+async def _get_images_async(queries: list[str], sector: str = "") -> tuple[list[dict], str]:
+    """
+    Ordre de priorité :
+      1. Portfolio Welldone (FRAMER_PROJECTS_COLLECTION_ID configuré)
+      2. Unsplash (UNSPLASH_ACCESS_KEY configuré)
+      3. Picsum (fallback gratuit, aucune clé)
+    Retourne (images, source_label).
+    """
+    # 1. Portfolio Welldone
+    if FRAMER_PROJECTS_COLLECTION_ID:
+        portfolio = await _get_portfolio_images(sector or " ".join(queries))
+        if portfolio:
+            return portfolio, "Portfolio Welldone"
+
+    # 2. Unsplash
     if UNSPLASH_ACCESS_KEY:
         imgs = _search_unsplash(queries)
         if imgs:
-            return imgs
-    return _fallback_images(queries)
+            return imgs, "Unsplash"
+
+    # 3. Picsum (fallback)
+    return _fallback_images(queries), "Picsum"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -562,10 +672,40 @@ class FramerAgent(BaseAgent):
     @property
     def commands(self):
         return {
-            "rédiger":   self.rediger,
-            "liste":     self.liste,
-            "supprimer": self.supprimer,
+            "rédiger":     self.rediger,
+            "liste":       self.liste,
+            "supprimer":   self.supprimer,
+            "collections": self.collections,
         }
+
+    async def collections(self, context: dict | None = None) -> str:
+        """Liste toutes les collections Framer — utile pour trouver l'ID des projets."""
+        result = await framer_get_collections()
+        if not result.get("ok"):
+            return f"❌ Erreur: {result.get('error')}"
+
+        cols = result.get("collections", [])
+        if not cols:
+            return "📭 Aucune collection trouvée."
+
+        configured = FRAMER_PROJECTS_COLLECTION_ID
+        lines = ["📦 *Collections Framer disponibles :*\n"]
+        for c in cols:
+            cid   = c["id"]
+            name  = c["name"]
+            count = c["count"]
+            tag   = " ← blog actif" if cid == FRAMER_COLLECTION_ID else ""
+            tag  += " ← portfolio actif ✅" if cid == configured else ""
+            lines.append(f"• *{name}* — `{cid}` ({count} items){tag}")
+
+        if not configured:
+            lines.append(
+                "\n💡 *Pour activer les photos de ton portfolio :*\n"
+                "1. Identifie la collection de tes projets ci-dessus\n"
+                "2. Ajoute dans Railway → Variables : `FRAMER_PROJECTS_COLLECTION_ID = <id>`\n"
+                "3. Les articles utiliseront tes vraies photos en priorité"
+            )
+        return "\n".join(lines)
 
     async def rediger(self, context: dict | None = None) -> str:
         """
@@ -608,11 +748,16 @@ class FramerAgent(BaseAgent):
         if not article:
             return "❌ Claude n'a pas retourné un JSON valide. Réessaie."
 
-        # ── 2. Images libres de droits ─────────────────────────────────────────
+        # ── 2. Images (portfolio Welldone > Unsplash > Picsum) ─────────────────
         img_queries = article.get("image_queries",
                                   [sujet, "professional photography Quebec", "business Montreal"])
-        images     = _get_images(img_queries)
-        img_source = "Unsplash" if UNSPLASH_ACCESS_KEY else "LoremFlickr"
+        # Normaliser image_queries si Claude a retourné des strings d'instructions
+        if isinstance(img_queries, list):
+            img_queries = [q for q in img_queries if isinstance(q, str) and len(q) < 80]
+        if not img_queries:
+            img_queries = [sujet, "professional photography Quebec"]
+        sector      = article.get("Secteur d'activité", "")
+        images, img_source = await _get_images_async(img_queries, sector)
 
         for i, field in enumerate(IMAGE_FIELDS):
             if i < len(images):

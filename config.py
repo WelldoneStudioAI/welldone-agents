@@ -78,6 +78,9 @@ AMADEUS_BASE_URL   = os.environ.get("AMADEUS_BASE_URL", "https://test.api.amadeu
 # ── Framer CMS (Blog awelldone.studio) ───────────────────────────────────────
 FRAMER_API_KEY       = os.environ.get("FRAMER_API_KEY", "fr_2xsx07vykt81c9y2p0krj2xgmk")
 FRAMER_COLLECTION_ID = os.environ.get("FRAMER_COLLECTION_ID", "ERDJzzQHr")  # Welldone Studio-Blog
+# Collection des projets (pour les photos de portfolio dans les articles de blog)
+# → Lancer `framer collections` dans Telegram pour trouver l'ID correct
+FRAMER_PROJECTS_COLLECTION_ID = os.environ.get("FRAMER_PROJECTS_COLLECTION_ID", "")
 # Unsplash Developer API (gratuit — https://unsplash.com/developers)
 # Ajouter UNSPLASH_ACCESS_KEY dans Railway pour des images de qualité
 UNSPLASH_ACCESS_KEY  = os.environ.get("UNSPLASH_ACCESS_KEY", "")
