@@ -156,15 +156,27 @@ async def cmd_agent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     agent_name = parts[0] if parts else ""
     command    = parts[1] if len(parts) > 1 else "help"
 
-    ctx = {}
-    i   = 2
+    ctx        = {}
+    positional = []
+    i          = 2
     while i < len(parts):
         if parts[i].startswith("--") and i + 1 < len(parts):
+            # --key value
             key = parts[i][2:]
             ctx[key] = parts[i + 1]
             i += 2
+        elif parts[i].endswith(":") and i + 1 < len(parts):
+            # "KEY: value"  (ex: "ID: e9vXkIRUA")
+            key = parts[i][:-1].lower()
+            ctx[key] = parts[i + 1]
+            i += 2
         else:
+            positional.append(parts[i])
             i += 1
+    # Premier arg positionnel → "id" si pas déjà fourni
+    # Permet: /framer supprimer e9vXkIRUA   (sans --id)
+    if positional and "id" not in ctx:
+        ctx["id"] = positional[0]
 
     if command == "help":
         agent_obj = discover_agents().get(agent_name)
