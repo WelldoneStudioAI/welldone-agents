@@ -37,6 +37,9 @@ Agents disponibles:
 - calendar: {add, list} → événements Google Calendar
 - notion: {task, search} → tâches et pages Notion
 - analytics: {rapport, sources, keywords, opportunities} → GA4 + Search Console
+  → "rapport" = audit complet GA4+GSC avec envoi d'email (utilise pour: "audit SEO", "rapport analytics", "envoie-moi le rapport", "analyse mon site")
+  → "opportunities" = liste rapide des mots-clés pos 4-20 dans Telegram SEULEMENT, sans email
+  → Par défaut si JP dit "audit", "rapport complet", "analyse SEO" → utilise "rapport"
 - qbo: {create, create_client, send, list} → facturation QuickBooks Online
 - veille: {run} → veille de contenu hebdomadaire
 - voyage: {search} → recherche de vols optimaux (GPT-4o + Google Flights)
