@@ -250,7 +250,7 @@ class FramerClient:
                 raise ValueError(f"Framer WS recv error: {e}")
 
             if isinstance(decoded, dict) and decoded.get("id") == cid:
-                if "error" in decoded:
+                if decoded.get("error") is not None:
                     raise ValueError(f"Framer error [{method_name}]: {decoded['error']}")
                 return decoded.get("result")
             # Autre message (push, keepalive) → ignorer et attendre
