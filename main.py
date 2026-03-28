@@ -7,6 +7,7 @@ Lance :
   2. Découverte des agents (auto-discovery)
   3. Bot Telegram (polling)
   4. Scheduler APScheduler (crons déclarés dans les agents)
+  5. API FastAPI (Paperclip HTTP Adapter) sur $PORT
 
 Usage :
   python main.py              → démarrage normal
@@ -78,7 +79,7 @@ async def main():
     )
     start_scheduler(scheduler)
 
-    log.info("main: démarrage du bot Telegram (polling)...")
+    log.info("main: démarrage du bot Telegram + API Paperclip...")
 
     # 6. Démarrer le bot
     await app.initialize()
@@ -87,12 +88,23 @@ async def main():
 
     log.info("✅ Welldone AI Agent Team — En ligne")
 
+    # 7. API FastAPI (Paperclip HTTP Adapter) en tâche de fond
+    import os, uvicorn
+    from api.server import app as fastapi_app
+    port = int(os.environ.get("PORT", 8080))
+    api_config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=port,
+                                log_level="warning", access_log=False)
+    api_server = uvicorn.Server(api_config)
+    api_task   = asyncio.create_task(api_server.serve())
+    log.info(f"main: API Paperclip → http://0.0.0.0:{port}")
+
     # Maintenir le process actif
     try:
         await asyncio.Event().wait()
     except (KeyboardInterrupt, SystemExit):
         log.info("main: arrêt demandé")
     finally:
+        api_task.cancel()
         from core.scheduler import stop_scheduler
         stop_scheduler()
         await app.updater.stop()
