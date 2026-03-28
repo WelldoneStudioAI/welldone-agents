@@ -214,16 +214,20 @@ class FramerClient:
             raw = await asyncio.wait_for(self._ws.recv(), timeout=12)
             decoded = devalue_decode(raw)
             log.debug(f"Framer WS prêt: {decoded}")
+        except asyncio.TimeoutError:
+            log.warning("Framer WS: pas de message 'ready' après 12s — on continue quand même")
         except Exception as e:
-            log.warning(f"Framer WS ready-wait: {e}")
+            await self._close()
+            raise ConnectionError(f"Framer WS connexion échouée: {e}") from e
 
     async def _close(self):
         if self._ws:
             try:
-                await self._ws.close()
-            except Exception:
-                pass
-            self._ws = None
+                await asyncio.wait_for(self._ws.close(), timeout=3)
+            except Exception as e:
+                log.debug(f"framer WS close: {e}")
+            finally:
+                self._ws = None
 
     # ── Invocation RPC ─────────────────────────────────────────────────────────
     async def invoke(self, method_name: str, *args, timeout: float = 30.0):
@@ -351,11 +355,13 @@ async def framer_add_item(slug: str, field_data: dict) -> dict:
     res = await _try_add(slug)
 
     # Retry avec suffix aléatoire si slug dupliqué
-    if not res["ok"] and "duplicate slug" in (res.get("error") or "").lower():
-        rand_suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=4))
-        new_slug = f"{slug[:74]}-{rand_suffix}"
-        log.info(f"framer: slug dupliqué, retry avec slug={new_slug}")
-        res = await _try_add(new_slug)
+    for _retry in range(3):
+        if res["ok"] or "duplicate" not in (res.get("error") or "").lower():
+            break
+        rand_suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=5))
+        retry_slug = f"{slug[:73]}-{rand_suffix}"
+        log.info(f"framer: slug dupliqué (retry {_retry+1}), nouveau slug={retry_slug}")
+        res = await _try_add(retry_slug)
 
     if not res["ok"]:
         return res
@@ -492,8 +498,8 @@ def _trigger_unsplash_download(download_location: str) -> None:
             headers={"Authorization": f"Client-ID {UNSPLASH_ACCESS_KEY}"},
         )
         urllib.request.urlopen(req, timeout=5)
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug(f"Unsplash download tracking: {e}")
 
 
 def _search_unsplash(queries: list[str]) -> list[dict]:
@@ -563,7 +569,7 @@ async def _get_images_async(queries: list[str], sector: str = "") -> tuple[list[
 
     # 2. Unsplash
     if UNSPLASH_ACCESS_KEY:
-        imgs = _search_unsplash(queries)
+        imgs = await asyncio.to_thread(_search_unsplash, queries)
         if imgs:
             return imgs, "Unsplash"
 
@@ -745,23 +751,23 @@ class FramerAgent(BaseAgent):
             # Tentative 1 : parse direct
             try:
                 return json.loads(raw)
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as e:
+                log.debug(f"JSON parse tentative 1: {e}")
             # Tentative 2 : extraire le bloc {} le plus large
             m = re.search(r"\{[\s\S]+\}", raw)
             if m:
                 try:
                     return json.loads(m.group(0))
-                except json.JSONDecodeError:
-                    pass
+                except json.JSONDecodeError as e:
+                    log.debug(f"JSON parse tentative 2: {e}")
             # Tentative 3 : fermer un JSON tronqué (max_tokens dépassé)
             truncated = raw.rstrip().rstrip(",")
             depth = truncated.count("{") - truncated.count("}")
             if depth > 0:
                 try:
                     return json.loads(truncated + "}" * depth)
-                except json.JSONDecodeError:
-                    pass
+                except json.JSONDecodeError as e:
+                    log.debug(f"JSON parse tentative 3: {e}")
             return {}
 
         article: dict = {}

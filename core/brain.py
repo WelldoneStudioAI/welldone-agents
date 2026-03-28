@@ -5,6 +5,7 @@ Transforme un message naturel en (agent_name, command, context).
 Claude est appelé UNIQUEMENT pour les messages non-structurés.
 Les commandes slash (/gmail read) sont parsées directement sans appel API.
 """
+import asyncio
 import json, logging
 import anthropic
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL
@@ -91,6 +92,7 @@ Pour "rédiger" framer, context doit avoir: sujet (str — idée ou sujet comple
 Pour "liste" framer → liste les articles existants (pas de context requis)
 Pour "supprimer" framer → context doit avoir: id (str — l'ID de l'article affiché par /framer liste)
 Pour "collections" framer → liste toutes les collections Framer du projet (IDs + noms) — utile pour configurer le portfolio
+Pour "publier" framer → publie le projet (lien Framer Editor) — pas de context requis
 Pour "chat", context doit avoir: message (le texte original)
 
 RÈGLE IMPORTANTE: Si l'utilisateur répond à une question précédente (ex: donne un email après qu'on lui a demandé pour créer un client), utilise l'historique de conversation pour reconstruire le context complet.
@@ -114,7 +116,8 @@ async def parse_intent(
     history = conversation_history[-18:]  # Garder les 18 derniers + le nouveau
 
     try:
-        resp = get_client().messages.create(
+        resp = await asyncio.to_thread(
+            get_client().messages.create,
             model=CLAUDE_MODEL,
             max_tokens=500,
             system=SYSTEM_PROMPT,
@@ -155,7 +158,8 @@ async def chat_respond(message: str, history: list[dict]) -> str:
 Tu l'aides avec la stratégie, la rédaction, les idées, et la gestion quotidienne de son studio.
 Ton ton : direct, concis, professionnel. En français québécois naturel."""
 
-        resp = get_client().messages.create(
+        resp = await asyncio.to_thread(
+            get_client().messages.create,
             model=CLAUDE_MODEL,
             max_tokens=1500,
             system=sys_prompt,
