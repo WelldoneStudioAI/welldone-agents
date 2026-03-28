@@ -20,7 +20,9 @@ import re
 import urllib.request
 import urllib.error
 import urllib.parse
-from datetime import date as _date
+import random
+import string
+from datetime import date as _date, datetime as _datetime
 
 try:
     import websockets
@@ -337,16 +339,28 @@ async def framer_list_items() -> dict:
 
 
 async def framer_add_item(slug: str, field_data: dict) -> dict:
-    """Retourne {ok, message} ou {ok:False, error}. Item créé en brouillon (staging)."""
-    async def _do():
-        async with FramerClient(FRAMER_API_KEY) as c:
-            result = await c.add_items(
-                FRAMER_COLLECTION_ID, [{"slug": slug, "fieldData": field_data}]
-            )
-            log.info(f"framer addCollectionItems2 response: {str(result)[:300]}")
-            return result
+    """Retourne {ok, message} ou {ok:False, error}. Item créé en brouillon (staging).
+    Retry automatique avec suffixe aléatoire si slug déjà pris."""
 
-    res = await _framer_op(_do())
+    async def _try_add(s: str) -> dict:
+        async def _do():
+            async with FramerClient(FRAMER_API_KEY) as c:
+                result = await c.add_items(
+                    FRAMER_COLLECTION_ID, [{"slug": s, "fieldData": field_data}]
+                )
+                log.info(f"framer addCollectionItems2 response: {str(result)[:300]}")
+                return result
+        return await _framer_op(_do())
+
+    res = await _try_add(slug)
+
+    # Retry avec suffix aléatoire si slug dupliqué
+    if not res["ok"] and "duplicate slug" in (res.get("error") or "").lower():
+        rand_suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=4))
+        new_slug = f"{slug[:74]}-{rand_suffix}"
+        log.info(f"framer: slug dupliqué, retry avec slug={new_slug}")
+        res = await _try_add(new_slug)
+
     if not res["ok"]:
         return res
     return {"ok": True, "message": "Article créé dans Framer CMS", "result": res["data"]}
@@ -768,10 +782,10 @@ class FramerAgent(BaseAgent):
                 }
 
         # ── 3. Construire le fieldData Framer (IDs exacts) ─────────────────────
-        # Suffixe MMDD pour unicité des slugs (empêche "Duplicate slug" sur même sujet)
-        _date_suffix = _date.today().strftime("%m%d")
+        # Suffixe MMDD-HHmm pour unicité absolue (même sujet, même jour → slug différent)
+        _ts_suffix = _datetime.now().strftime("%m%d-%H%M")
         slug_base  = _make_slug(article.get("slug") or article.get("Title") or sujet)
-        slug       = f"{slug_base[:74]}-{_date_suffix}"   # max 80 chars
+        slug       = f"{slug_base[:68]}-{_ts_suffix}"   # max 80 chars
         field_data: dict = {}
 
         for col_name, meta in FIELD_MAP.items():
