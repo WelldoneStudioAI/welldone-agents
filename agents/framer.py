@@ -737,29 +737,57 @@ class FramerAgent(BaseAgent):
 
         # ── 1. Générer le contenu structuré avec Claude ────────────────────────
         log.info(f"framer.rediger: génération pour « {sujet[:60]} »")
-        try:
-            resp = get_client().messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=6000,
-                messages=[{"role": "user", "content": _GENERATION_PROMPT.format(sujet=sujet)}],
-            )
-            raw = resp.content[0].text.strip()
-        except Exception as e:
-            return f"❌ Erreur Claude: {e}"
 
-        raw = re.sub(r"^```(?:json)?\n?", "", raw)
-        raw = re.sub(r"\n?```$", "", raw.strip())
-
-        try:
-            article = json.loads(raw)
-        except json.JSONDecodeError:
-            m = re.search(r"\{[\s\S]+\}", raw)
+        def _parse_article_json(raw: str) -> dict:
+            """Essaie plusieurs stratégies pour extraire le JSON de la réponse Claude."""
+            raw = raw.strip()
+            # Retirer les blocs markdown ```json ... ```
+            raw = re.sub(r"^```(?:json)?\s*\n?", "", raw)
+            raw = re.sub(r"\n?```\s*$", "", raw)
+            raw = raw.strip()
+            # Tentative 1 : parse direct
             try:
-                article = json.loads(m.group(0)) if m else {}
-            except Exception:
-                article = {}
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                pass
+            # Tentative 2 : extraire le bloc {} le plus large
+            m = re.search(r"\{[\s\S]+\}", raw)
+            if m:
+                try:
+                    return json.loads(m.group(0))
+                except json.JSONDecodeError:
+                    pass
+            # Tentative 3 : fermer un JSON tronqué (max_tokens dépassé)
+            truncated = raw.rstrip().rstrip(",")
+            depth = truncated.count("{") - truncated.count("}")
+            if depth > 0:
+                try:
+                    return json.loads(truncated + "}" * depth)
+                except json.JSONDecodeError:
+                    pass
+            return {}
+
+        article: dict = {}
+        last_raw = ""
+        for attempt in range(2):   # max 2 tentatives
+            try:
+                resp = get_client().messages.create(
+                    model=CLAUDE_MODEL,
+                    max_tokens=8000,   # augmenté : article complet peut dépasser 6000
+                    messages=[{"role": "user", "content": _GENERATION_PROMPT.format(sujet=sujet)}],
+                )
+                last_raw = resp.content[0].text.strip()
+                log.debug(f"framer: Claude stop_reason={resp.stop_reason} len={len(last_raw)}")
+            except Exception as e:
+                return f"❌ Erreur Claude: {e}"
+
+            article = _parse_article_json(last_raw)
+            if article:
+                break
+            log.warning(f"framer: JSON invalide (tentative {attempt+1}), raw[:200]={last_raw[:200]}")
 
         if not article:
+            log.error(f"framer: JSON invalide après 2 tentatives. raw[:400]={last_raw[:400]}")
             return "❌ Claude n'a pas retourné un JSON valide. Réessaie."
 
         # ── 2. Images (portfolio Welldone > Unsplash > Picsum) ─────────────────
