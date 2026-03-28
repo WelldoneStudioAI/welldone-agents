@@ -39,7 +39,7 @@ Agents disponibles:
 - qbo: {create, create_client, send, list} → facturation QuickBooks Online
 - veille: {run} → veille de contenu hebdomadaire
 - voyage: {search} → recherche de vols optimaux (GPT-4o + Google Flights)
-- framer: {rédiger, liste, supprimer, collections} → articles de blog Framer CMS (awelldone.studio/journal/)
+- framer: {rédiger, liste, supprimer, collections, publier} → articles de blog Framer CMS (awelldone.studio/journal/)
 - email: {trier, lire, chercher, résumer, rédiger, envoyer, filtres, créer_filtre, appliquer_filtres, dossiers} → boîte WHC jptanguay@awelldone.com
 - chat: {respond} → conversation générale, rédaction, brainstorm
 
