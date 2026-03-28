@@ -66,8 +66,29 @@ GSC_SITE_ARCHI  = "sc-domain:welldone.archi"
 # ── OpenAI (Agent Voyage — GPT-4o + function calling) ────────────────────────
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
-# ── SerpAPI (Google Flights pour agent voyage) ────────────────────────────────
+# ── SerpAPI (conservé en fallback) ───────────────────────────────────────────
 SERPAPI_KEY = os.environ.get("SERPAPI_KEY", "")
+
+# ── Amadeus (Flight Offers — inclut Air Transat, WestJet, Air Canada + hubs) ──
+AMADEUS_API_KEY    = os.environ.get("AMADEUS_API_KEY", "")
+AMADEUS_API_SECRET = os.environ.get("AMADEUS_API_SECRET", "")
+# test = sandbox gratuit | production = données réelles (2000 appels/mois gratuit)
+AMADEUS_BASE_URL   = os.environ.get("AMADEUS_BASE_URL", "https://test.api.amadeus.com")
+
+# ── Framer CMS (Blog awelldone.studio) ───────────────────────────────────────
+FRAMER_API_KEY       = os.environ.get("FRAMER_API_KEY", "fr_2xsx07vykt81c9y2p0krj2xgmk")
+FRAMER_COLLECTION_ID = os.environ.get("FRAMER_COLLECTION_ID", "ERDJzzQHr")  # Welldone Studio-Blog
+# Unsplash Developer API (gratuit — https://unsplash.com/developers)
+# Ajouter UNSPLASH_ACCESS_KEY dans Railway pour des images de qualité
+UNSPLASH_ACCESS_KEY  = os.environ.get("UNSPLASH_ACCESS_KEY", "")
+
+# ── WHC Email (IMAP/SMTP — awelldone.com) ────────────────────────────────────
+WHC_IMAP_HOST = os.environ.get("WHC_IMAP_HOST", "mail.awelldone.com")
+WHC_IMAP_PORT = int(os.environ.get("WHC_IMAP_PORT", "993"))
+WHC_SMTP_HOST = os.environ.get("WHC_SMTP_HOST", "mail.awelldone.com")
+WHC_SMTP_PORT = int(os.environ.get("WHC_SMTP_PORT", "465"))
+WHC_EMAIL     = os.environ.get("WHC_EMAIL",    "jptanguay@awelldone.com")
+WHC_PASSWORD  = os.environ.get("WHC_PASSWORD", "")
 
 # ── Timezone ──────────────────────────────────────────────────────────────────
 TIMEZONE = "America/Toronto"
