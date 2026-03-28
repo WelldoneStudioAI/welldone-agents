@@ -39,7 +39,7 @@ Agents disponibles:
 - qbo: {create, create_client, send, list} → facturation QuickBooks Online
 - veille: {run} → veille de contenu hebdomadaire
 - voyage: {search} → recherche de vols optimaux (GPT-4o + Google Flights)
-- framer: {rédiger, liste, supprimer} → articles de blog Framer CMS (awelldone.studio/journal/)
+- framer: {rédiger, liste, supprimer, collections} → articles de blog Framer CMS (awelldone.studio/journal/)
 - email: {trier, lire, chercher, résumer, rédiger, envoyer, filtres, créer_filtre, appliquer_filtres, dossiers} → boîte WHC jptanguay@awelldone.com
 - chat: {respond} → conversation générale, rédaction, brainstorm
 
@@ -90,6 +90,7 @@ Pour "rédiger" framer, context doit avoir: sujet (str — idée ou sujet comple
   - Le sujet doit être le plus complet possible (reprendre la demande entière de JP)
 Pour "liste" framer → liste les articles existants (pas de context requis)
 Pour "supprimer" framer → context doit avoir: id (str — l'ID de l'article affiché par /framer liste)
+Pour "collections" framer → liste toutes les collections Framer du projet (IDs + noms) — utile pour configurer le portfolio
 Pour "chat", context doit avoir: message (le texte original)
 
 RÈGLE IMPORTANTE: Si l'utilisateur répond à une question précédente (ex: donne un email après qu'on lui a demandé pour créer un client), utilise l'historique de conversation pour reconstruire le context complet.
