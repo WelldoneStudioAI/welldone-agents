@@ -13,3 +13,4 @@ openai
 pytz
 httpx
 urllib3<2
+websockets>=12.0

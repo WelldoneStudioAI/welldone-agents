@@ -2,7 +2,9 @@
 agents/framer.py — Agent Framer CMS pour le blog de Welldone Studio.
 
 Architecture:
-  Telegram → agents/framer.py (Python) → framer_helper.js (Node.js SDK WebSocket) → Framer CMS
+  Telegram → agents/framer.py (Python WebSocket) → Framer CMS
+  Connexion directe via wss://api.framer.com/channel/headless-plugin
+  Protocole : devalue flat-array + methodInvocation / methodResponse
 
 Collection cible : ERDJzzQHr (Welldone Studio-Blog)
 Field map extrait live depuis l'article Wildman (référence).
@@ -11,8 +13,19 @@ Images libres de droits:
   - Unsplash API si UNSPLASH_ACCESS_KEY dispo
   - LoremFlickr sinon (aucune clé, CC)
 """
-import json, logging, os, re, subprocess, urllib.request, urllib.error, urllib.parse
-from pathlib import Path
+import asyncio
+import json
+import logging
+import re
+import urllib.request
+import urllib.error
+import urllib.parse
+
+try:
+    import websockets
+    _WS_AVAILABLE = True
+except ImportError:
+    _WS_AVAILABLE = False
 
 from agents._base import BaseAgent
 from core.brain import get_client
@@ -20,10 +33,17 @@ from config import CLAUDE_MODEL, FRAMER_API_KEY, FRAMER_COLLECTION_ID, UNSPLASH_
 
 log = logging.getLogger(__name__)
 
-_HELPER = Path(__file__).parent.parent / "framer_helper.js"
+# ── Framer WebSocket constants ─────────────────────────────────────────────────
+# Project ID : 20 chars après '--' dans l'URL du projet Framer
+# https://framer.com/projects/Welldone-Studio--nghGT4Mav9pHCoHxYhyn-cuMch
+FRAMER_PROJECT_ID = "nghGT4Mav9pHCoHxYhyn"
+FRAMER_WS_URL = (
+    f"wss://api.framer.com/channel/headless-plugin"
+    f"?projectId={FRAMER_PROJECT_ID}&sdkVersion=0.1.4"
+)
 
-# ── Field map confirmé via Wildman Wilderness (référence live) ────────────────
-# IDs découverts en inspectant les champs de ERDJzzQHr via le SDK
+# ── Field map confirmé via Wildman Wilderness (référence live) ─────────────────
+# IDs confirmés en inspectant les items de ERDJzzQHr via le SDK Node.js
 FIELD_MAP: dict[str, dict] = {
     "Title":                {"id": "dAZk2Jaon", "type": "string"},
     "Sous-Titre (gauche)":  {"id": "b3XlDEEmG", "type": "string"},
@@ -68,7 +88,319 @@ FIELD_MAP: dict[str, dict] = {
 IMAGE_FIELDS = ["Hero-Image", "Image 2", "Image 3", "Image 4",
                 "Image 5", "Image 6", "Image 7", "Image 8"]
 
-# ── Prompt de génération ──────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# devalue protocol (reverse-engineered from framer-api npm package)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def devalue_encode(obj) -> str:
+    """
+    Encode un objet Python en format devalue (flat-array).
+
+    Format : [root_with_indices, val1, val2, ...]
+    - Dans les objets : valeurs = indices INTEGER vers flat[]
+    - Dans les tableaux : éléments = indices INTEGER vers flat[]
+    - Les primitifs au niveau supérieur sont des littéraux
+
+    Exemple :
+      {type:"methodInvocation", methodName:"getCollections", id:1, args:[]}
+      → [{"type":1,"methodName":2,"id":3,"args":4},
+         "methodInvocation","getCollections",1,[]]
+    """
+    flat: list = []
+
+    def _add(v):
+        if isinstance(v, dict):
+            idx = len(flat)
+            flat.append(None)          # placeholder
+            encoded = {k: _add(val) for k, val in v.items()}
+            flat[idx] = encoded
+            return idx
+        elif isinstance(v, list):
+            idx = len(flat)
+            flat.append(None)          # placeholder
+            encoded = [_add(item) for item in v]
+            flat[idx] = encoded
+            return idx
+        else:
+            # Primitive : str, int, float, bool, None
+            idx = len(flat)
+            flat.append(v)
+            return idx
+
+    _add(obj)
+    return json.dumps(flat, ensure_ascii=False, separators=(",", ":"))
+
+
+def devalue_decode(s: str):
+    """
+    Décode une string devalue (flat-array) en objet Python.
+
+    Règle : dans un objet du flat[], les valeurs sont des INDICES ;
+            dans un tableau du flat[], les éléments sont des INDICES ;
+            les primitifs directs sont des littéraux.
+    """
+    flat = json.loads(s)
+    if not isinstance(flat, list) or not flat:
+        return flat
+
+    def _resolve(x):
+        if isinstance(x, dict):
+            result = {}
+            for k, v in x.items():
+                if isinstance(v, int) and 0 <= v < len(flat):
+                    result[k] = _resolve(flat[v])
+                else:
+                    result[k] = v   # valeur non-index (fallback)
+            return result
+        elif isinstance(x, list):
+            result = []
+            for i in x:
+                if isinstance(i, int) and 0 <= i < len(flat):
+                    result.append(_resolve(flat[i]))
+                else:
+                    result.append(i)
+            return result
+        else:
+            return x  # primitif littéral
+
+    return _resolve(flat[0])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Framer WebSocket client
+# ══════════════════════════════════════════════════════════════════════════════
+
+class FramerClient:
+    """
+    Client WebSocket pur-Python pour l'API Framer CMS.
+
+    Utilise le protocole devalue flat-array.
+    Context manager async : async with FramerClient(api_key) as c: ...
+    """
+
+    def __init__(self, api_key: str):
+        self.api_key   = api_key
+        self._ws       = None
+        self._call_id  = 0
+
+    # ── Context manager ────────────────────────────────────────────────────────
+    async def __aenter__(self):
+        await self._connect()
+        return self
+
+    async def __aexit__(self, *_):
+        await self._close()
+
+    # ── Connexion ──────────────────────────────────────────────────────────────
+    async def _connect(self):
+        headers = {
+            "Authorization": f"Token {self.api_key}",
+            "Origin":        "https://framer.com",
+        }
+        self._ws = await websockets.connect(
+            FRAMER_WS_URL,
+            additional_headers=headers,
+            open_timeout=15,
+            close_timeout=5,
+            ping_interval=None,   # évite les pings inattendus pendant les appels longs
+        )
+        # Attendre le message "ready" du serveur
+        try:
+            raw = await asyncio.wait_for(self._ws.recv(), timeout=12)
+            decoded = devalue_decode(raw)
+            log.debug(f"Framer WS prêt: {decoded}")
+        except Exception as e:
+            log.warning(f"Framer WS ready-wait: {e}")
+
+    async def _close(self):
+        if self._ws:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
+
+    # ── Invocation RPC ─────────────────────────────────────────────────────────
+    async def invoke(self, method_name: str, *args, timeout: float = 30.0):
+        """
+        Invoque une méthode Framer CMS via WebSocket et retourne le résultat.
+        Lève ValueError en cas d'erreur serveur.
+        """
+        self._call_id += 1
+        cid = self._call_id
+
+        msg     = {"type": "methodInvocation", "methodName": method_name,
+                   "id": cid, "args": list(args)}
+        encoded = devalue_encode(msg)
+        await self._ws.send(encoded)
+
+        # Attendre la réponse correspondante (ignorer les autres messages push)
+        deadline = asyncio.get_event_loop().time() + timeout
+        while True:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError(f"{method_name} timeout après {timeout}s")
+            try:
+                raw     = await asyncio.wait_for(self._ws.recv(), timeout=remaining)
+                decoded = devalue_decode(raw)
+            except asyncio.TimeoutError:
+                raise asyncio.TimeoutError(f"{method_name} timeout après {timeout}s")
+            except Exception as e:
+                raise ValueError(f"Framer WS recv error: {e}")
+
+            if isinstance(decoded, dict) and decoded.get("id") == cid:
+                if "error" in decoded:
+                    raise ValueError(f"Framer error [{method_name}]: {decoded['error']}")
+                return decoded.get("result")
+            # Autre message (push, keepalive) → ignorer et attendre
+
+    # ── Méthodes CMS ──────────────────────────────────────────────────────────
+    async def get_collections(self):
+        return await self.invoke("getCollections", timeout=20)
+
+    async def get_items(self, collection_id: str):
+        return await self.invoke("getCollectionItems2", collection_id, timeout=30)
+
+    async def add_items(self, collection_id: str, items: list):
+        return await self.invoke("addCollectionItems2", collection_id, items, timeout=45)
+
+    async def remove_items(self, collection_id: str, item_ids: list):
+        """item_ids : liste de dicts {id: str}"""
+        return await self.invoke("removeCollectionItems", collection_id, item_ids, timeout=20)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Opérations Framer de haut niveau
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _framer_op(coro) -> dict:
+    """Wrapper commun : gestion timeout + exceptions."""
+    if not _WS_AVAILABLE:
+        return {"ok": False, "error": "Module 'websockets' non installé (pip install websockets)"}
+    if not FRAMER_API_KEY:
+        return {"ok": False, "error": "FRAMER_API_KEY manquant dans les variables Railway"}
+    try:
+        result = await asyncio.wait_for(coro, timeout=75)
+        return {"ok": True, "data": result}
+    except asyncio.TimeoutError:
+        return {"ok": False, "error": "Timeout 75s — Framer CMS inaccessible"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+async def framer_list_items() -> dict:
+    """Retourne {ok, items, count} ou {ok:False, error}."""
+    async def _do():
+        async with FramerClient(FRAMER_API_KEY) as c:
+            return await c.get_items(FRAMER_COLLECTION_ID)
+
+    res = await _framer_op(_do())
+    if not res["ok"]:
+        return res
+
+    raw_items = res["data"] or []
+    simplified = []
+    for item in (raw_items if isinstance(raw_items, list) else []):
+        fd    = item.get("fieldData") or {}
+        title = None
+        for fid, field in fd.items():
+            if isinstance(field, dict) and field.get("type") == "string" and field.get("value"):
+                title = field["value"]
+                break
+        simplified.append({
+            "id":        item.get("id"),
+            "slug":      item.get("slug"),
+            "title":     title or item.get("slug") or "(sans titre)",
+            "published": item.get("published", False),
+        })
+    return {"ok": True, "items": simplified, "count": len(simplified)}
+
+
+async def framer_add_item(slug: str, field_data: dict) -> dict:
+    """Retourne {ok, message} ou {ok:False, error}."""
+    async def _do():
+        async with FramerClient(FRAMER_API_KEY) as c:
+            return await c.add_items(FRAMER_COLLECTION_ID, [{"slug": slug, "fieldData": field_data}])
+
+    res = await _framer_op(_do())
+    if not res["ok"]:
+        return res
+    return {"ok": True, "message": "Article créé dans Framer CMS", "result": res["data"]}
+
+
+async def framer_delete_item(item_id: str) -> dict:
+    """Retourne {ok, message} ou {ok:False, error}."""
+    async def _do():
+        async with FramerClient(FRAMER_API_KEY) as c:
+            return await c.remove_items(FRAMER_COLLECTION_ID, [{"id": item_id}])
+
+    res = await _framer_op(_do())
+    if not res["ok"]:
+        return res
+    return {"ok": True, "message": f"Article {item_id} supprimé"}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Images libres de droits
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _search_unsplash(queries: list[str]) -> list[dict]:
+    results = []
+    for query in queries[:3]:
+        try:
+            q   = urllib.parse.quote(query)
+            url = f"https://api.unsplash.com/search/photos?query={q}&per_page=3&orientation=landscape"
+            req = urllib.request.Request(
+                url, headers={"Authorization": f"Client-ID {UNSPLASH_ACCESS_KEY}"})
+            resp = urllib.request.urlopen(req, timeout=10)
+            data = json.loads(resp.read())
+            for photo in data.get("results", []):
+                results.append({"src": photo["urls"]["regular"],
+                                 "alt": photo.get("alt_description") or query})
+                if len(results) >= 8:
+                    return results
+        except Exception as e:
+            log.warning(f"Unsplash '{query}': {e}")
+    return results
+
+
+def _fallback_images(queries: list[str]) -> list[dict]:
+    """LoremFlickr — photos CC libres de droits, aucune clé requise."""
+    results = []
+    for i in range(8):
+        q = queries[i % len(queries)].replace(" ", ",") if queries else "business,montreal"
+        results.append({"src": f"https://loremflickr.com/1200/800/{q}?lock={i + 1}",
+                         "alt": q.replace(",", " ")})
+    return results
+
+
+def _get_images(queries: list[str]) -> list[dict]:
+    if UNSPLASH_ACCESS_KEY:
+        imgs = _search_unsplash(queries)
+        if imgs:
+            return imgs
+    return _fallback_images(queries)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Slug
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _make_slug(text: str) -> str:
+    s = text.lower().strip()
+    for src, dst in [("é","e"),("è","e"),("ê","e"),("à","a"),("â","a"),("ô","o"),
+                     ("î","i"),("û","u"),("ù","u"),("ç","c"),("ë","e"),("ï","i")]:
+        s = s.replace(src, dst)
+    s = re.sub(r"[^a-z0-9\s-]", "", s)
+    s = re.sub(r"[\s_]+", "-", s)
+    return re.sub(r"-+", "-", s).strip("-")[:80]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Prompt de génération Claude
+# ══════════════════════════════════════════════════════════════════════════════
+
 _GENERATION_PROMPT = """\
 Tu génères un article complet pour le blog de Welldone Studio (awelldone.studio/journal/).
 
@@ -140,78 +472,10 @@ Retourne UNIQUEMENT ce JSON (aucun texte avant/après, aucun markdown) :
 }}"""
 
 
-# ── Subprocess helper ─────────────────────────────────────────────────────────
-def _run_helper(command: str, arg: str = "") -> dict:
-    env = {**os.environ,
-           "FRAMER_API_KEY": FRAMER_API_KEY,
-           "FRAMER_COLLECTION_ID": FRAMER_COLLECTION_ID}
-    cmd = ["node", str(_HELPER), command]
-    if arg:
-        cmd.append(arg)
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env)
-        out = r.stdout.strip()
-        if not out:
-            return {"ok": False, "error": r.stderr.strip() or "Pas de réponse du helper"}
-        return json.loads(out)
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "error": "Timeout 60s — connexion Framer trop longue"}
-    except FileNotFoundError:
-        return {"ok": False, "error": "Node.js introuvable — vérifier le Dockerfile"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+# ══════════════════════════════════════════════════════════════════════════════
+# Agent Framer
+# ══════════════════════════════════════════════════════════════════════════════
 
-
-# ── Images libres de droits ───────────────────────────────────────────────────
-def _search_unsplash(queries: list[str]) -> list[dict]:
-    results = []
-    for query in queries[:3]:
-        try:
-            q   = urllib.parse.quote(query)
-            url = f"https://api.unsplash.com/search/photos?query={q}&per_page=3&orientation=landscape"
-            req = urllib.request.Request(url, headers={"Authorization": f"Client-ID {UNSPLASH_ACCESS_KEY}"})
-            resp = urllib.request.urlopen(req, timeout=10)
-            data = json.loads(resp.read())
-            for photo in data.get("results", []):
-                results.append({"src": photo["urls"]["regular"],
-                                 "alt": photo.get("alt_description") or query})
-                if len(results) >= 8:
-                    return results
-        except Exception as e:
-            log.warning(f"Unsplash '{query}': {e}")
-    return results
-
-
-def _fallback_images(queries: list[str]) -> list[dict]:
-    """LoremFlickr — photos CC libres de droits, aucune clé."""
-    results = []
-    for i in range(8):
-        q = queries[i % len(queries)].replace(" ", ",") if queries else "business,montreal"
-        results.append({"src": f"https://loremflickr.com/1200/800/{q}?lock={i + 1}",
-                         "alt": q.replace(",", " ")})
-    return results
-
-
-def _get_images(queries: list[str]) -> list[dict]:
-    if UNSPLASH_ACCESS_KEY:
-        imgs = _search_unsplash(queries)
-        if imgs:
-            return imgs
-    return _fallback_images(queries)
-
-
-# ── Slug ──────────────────────────────────────────────────────────────────────
-def _make_slug(text: str) -> str:
-    s = text.lower().strip()
-    for src, dst in [("é","e"),("è","e"),("ê","e"),("à","a"),("â","a"),("ô","o"),
-                     ("î","i"),("û","u"),("ù","u"),("ç","c"),("ë","e"),("ï","i")]:
-        s = s.replace(src, dst)
-    s = re.sub(r"[^a-z0-9\s-]", "", s)
-    s = re.sub(r"[\s_]+", "-", s)
-    return re.sub(r"-+", "-", s).strip("-")[:80]
-
-
-# ── Agent ─────────────────────────────────────────────────────────────────────
 class FramerAgent(BaseAgent):
     name        = "framer"
     description = "Rédiger et publier des articles de blog dans Framer CMS"
@@ -226,18 +490,19 @@ class FramerAgent(BaseAgent):
 
     async def rediger(self, context: dict | None = None) -> str:
         """
-        Génère un article complet (47 champs) et le publie en brouillon dans Framer.
+        Génère un article complet (47 champs) et le publie dans Framer CMS.
         context: { sujet: str }
         """
         ctx   = context or {}
         sujet = ctx.get("sujet", ctx.get("message", "")).strip()
 
         if not sujet:
-            return "❌ Paramètre `sujet` manquant. Ex: « Rédige un article sur comment choisir son photographe corporatif à Montréal »"
+            return ("❌ Paramètre `sujet` manquant. "
+                    "Ex: « Rédige un article sur comment choisir son photographe corporatif à Montréal »")
         if not FRAMER_API_KEY:
             return "❌ `FRAMER_API_KEY` manquant dans les variables Railway."
 
-        # ── 1. Générer le contenu structuré avec Claude ───────────────────────
+        # ── 1. Générer le contenu structuré avec Claude ────────────────────────
         log.info(f"framer.rediger: génération pour « {sujet[:60]} »")
         try:
             resp = get_client().messages.create(
@@ -264,23 +529,22 @@ class FramerAgent(BaseAgent):
         if not article:
             return "❌ Claude n'a pas retourné un JSON valide. Réessaie."
 
-        # ── 2. Images libres de droits ────────────────────────────────────────
+        # ── 2. Images libres de droits ─────────────────────────────────────────
         img_queries = article.get("image_queries",
                                   [sujet, "professional photography Quebec", "business Montreal"])
-        images = _get_images(img_queries)
+        images     = _get_images(img_queries)
         img_source = "Unsplash" if UNSPLASH_ACCESS_KEY else "LoremFlickr"
 
-        # Assigner les images aux champs + override alt depuis Claude
         for i, field in enumerate(IMAGE_FIELDS):
             if i < len(images):
-                alt_key = f"{field}:alt"
+                alt_key     = f"{field}:alt"
                 article[field] = {
                     "src": images[i]["src"],
                     "alt": article.get(alt_key) or images[i].get("alt", ""),
                 }
 
-        # ── 3. Construire le fieldData Framer (IDs exacts) ───────────────────
-        slug = _make_slug(article.get("slug") or article.get("Title") or sujet)
+        # ── 3. Construire le fieldData Framer (IDs exacts) ─────────────────────
+        slug       = _make_slug(article.get("slug") or article.get("Title") or sujet)
         field_data: dict = {}
 
         for col_name, meta in FIELD_MAP.items():
@@ -288,7 +552,6 @@ class FramerAgent(BaseAgent):
             ftype = meta["type"]
 
             if ftype == "image":
-                # Framer attend { src, alt } pour les images
                 val = article.get(col_name)
                 if isinstance(val, dict) and val.get("src"):
                     field_data[fid] = {"value": val, "type": "image"}
@@ -305,12 +568,9 @@ class FramerAgent(BaseAgent):
                 if val:
                     field_data[fid] = {"value": str(val), "type": "string"}
 
-        framer_item = {"slug": slug, "fieldData": field_data}
-
-        # ── 4. Push vers Framer CMS via Node.js helper ────────────────────────
+        # ── 4. Push vers Framer CMS via WebSocket Python ───────────────────────
         log.info(f"framer.rediger: push slug={slug} fields={len(field_data)}")
-        result = _run_helper("create", json.dumps(framer_item))
-
+        result    = await framer_add_item(slug, field_data)
         titre     = article.get("Title", sujet)
         img_count = len([f for f in IMAGE_FIELDS if article.get(f)])
 
@@ -329,8 +589,8 @@ class FramerAgent(BaseAgent):
             return (
                 f"⚠️ *Article généré mais NON publié dans Framer*\n\n"
                 f"📰 *{titre}*\n"
-                f"❌ Erreur: {err[:300]}\n\n"
-                f"💡 Relance `railway up` si c'est un problème de connexion."
+                f"❌ Erreur: {err[:400]}\n\n"
+                f"🔍 Vérifie FRAMER_API_KEY dans Railway."
             )
 
     async def liste(self, context: dict | None = None) -> str:
@@ -338,7 +598,7 @@ class FramerAgent(BaseAgent):
         if not FRAMER_API_KEY:
             return "❌ `FRAMER_API_KEY` manquant dans Railway."
 
-        result = _run_helper("list")
+        result = await framer_list_items()
         if not result.get("ok"):
             return f"❌ Erreur Framer: {result.get('error', 'Inconnu')}"
 
@@ -363,7 +623,7 @@ class FramerAgent(BaseAgent):
         if not FRAMER_API_KEY:
             return "❌ `FRAMER_API_KEY` manquant dans Railway."
 
-        result = _run_helper("delete", item_id)
+        result = await framer_delete_item(item_id)
         if result.get("ok"):
             return f"🗑️ Article `{item_id}` supprimé de Framer CMS."
         return f"❌ Erreur: {result.get('error', 'Inconnu')}"

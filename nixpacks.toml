@@ -1,14 +1,9 @@
-[phases.setup]
-cmds = [
-  "apt-get update -qq && apt-get install -y curl",
-  "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",
-  "apt-get install -y nodejs"
-]
+# nixpacks.toml — Python only, plus de Node.js requis
+# Framer CMS : client WebSocket pur Python (websockets >= 12)
 
 [phases.install]
 cmds = [
-  "pip install --no-cache-dir -r requirements.txt",
-  "npm install --omit=dev"
+  "pip install --no-cache-dir -r requirements.txt"
 ]
 
 [start]
