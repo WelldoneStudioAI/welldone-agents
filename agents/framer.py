@@ -263,7 +263,7 @@ class FramerClient:
         return await self.invoke("getCollectionItems2", collection_id, timeout=30)
 
     async def add_items(self, collection_id: str, items: list):
-        return await self.invoke("addCollectionItems2", collection_id, items, timeout=45)
+        return await self.invoke("addCollectionItems2", collection_id, items, timeout=120)
 
     async def remove_items(self, collection_id: str, item_ids: list):
         """item_ids : liste de dicts {id: str}"""
@@ -281,10 +281,10 @@ async def _framer_op(coro) -> dict:
     if not FRAMER_API_KEY:
         return {"ok": False, "error": "FRAMER_API_KEY manquant dans les variables Railway"}
     try:
-        result = await asyncio.wait_for(coro, timeout=75)
+        result = await asyncio.wait_for(coro, timeout=150)
         return {"ok": True, "data": result}
     except asyncio.TimeoutError:
-        return {"ok": False, "error": "Timeout 75s — Framer CMS inaccessible"}
+        return {"ok": False, "error": "Timeout 150s — Framer CMS inaccessible"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -552,10 +552,9 @@ class FramerAgent(BaseAgent):
             ftype = meta["type"]
 
             if ftype == "image":
-                val = article.get(col_name)
-                if isinstance(val, dict) and val.get("src"):
-                    # Framer attend une string URL (pas un objet {src, alt})
-                    field_data[fid] = {"value": val["src"], "type": "image"}
+                # Images OMISES volontairement : Framer tente de télécharger chaque URL
+                # côté serveur → timeout. Les images s'ajoutent via l'éditeur Framer.
+                pass
             elif ftype == "formattedText":
                 val = article.get(col_name, "")
                 if val:
@@ -580,8 +579,8 @@ class FramerAgent(BaseAgent):
                 f"✅ *Article publié dans Framer CMS*\n\n"
                 f"📰 *{titre}*\n"
                 f"🔗 Slug: `{slug}`\n"
-                f"🖼️ {img_count} images ({img_source})\n"
-                f"📋 {len(field_data)} champs remplis sur {len(FIELD_MAP)}\n\n"
+                f"📋 {len(field_data)} champs texte remplis\n"
+                f"🖼️ Images : à ajouter via l'éditeur Framer\n\n"
                 f"👉 awelldone.studio/journal/{slug}"
             )
         else:
