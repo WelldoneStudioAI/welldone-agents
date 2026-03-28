@@ -768,9 +768,11 @@ class FramerAgent(BaseAgent):
         last_raw = ""
         for attempt in range(2):   # max 2 tentatives
             try:
-                resp = get_client().messages.create(
+                # asyncio.to_thread : évite de bloquer l'event loop pendant l'appel sync
+                resp = await asyncio.to_thread(
+                    get_client().messages.create,
                     model=CLAUDE_MODEL,
-                    max_tokens=8000,   # augmenté : article complet peut dépasser 6000
+                    max_tokens=8000,
                     messages=[{"role": "user", "content": _GENERATION_PROMPT.format(sujet=sujet)}],
                 )
                 last_raw = resp.content[0].text.strip()

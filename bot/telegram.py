@@ -316,10 +316,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Tous les autres agents
-    if agent_name == "chat":
-        result = await chat_respond(text, history[:-1])
-    else:
-        result = await dispatch(agent_name, command, ctx)
+    import asyncio as _asyncio
+    try:
+        if agent_name == "chat":
+            result = await chat_respond(text, history[:-1])
+        else:
+            # Timeout global de 3 minutes pour éviter les silences infinis
+            result = await _asyncio.wait_for(
+                dispatch(agent_name, command, ctx),
+                timeout=180,
+            )
+    except _asyncio.TimeoutError:
+        result = (
+            f"⏱️ *Timeout — opération trop longue (>3 min)*\n\n"
+            f"L'agent `{agent_name}.{command}` n'a pas répondu à temps.\n"
+            f"Réessaie dans quelques instants."
+        )
+    except Exception as e:
+        log.error(f"handle_message dispatch error: {e}", exc_info=True)
+        result = f"❌ Erreur inattendue dans `{agent_name}.{command}` : {e}"
 
     if typing_task:
         typing_task.cancel()
