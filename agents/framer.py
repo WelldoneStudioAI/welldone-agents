@@ -554,7 +554,8 @@ class FramerAgent(BaseAgent):
             if ftype == "image":
                 val = article.get(col_name)
                 if isinstance(val, dict) and val.get("src"):
-                    field_data[fid] = {"value": val, "type": "image"}
+                    # Framer attend une string URL (pas un objet {src, alt})
+                    field_data[fid] = {"value": val["src"], "type": "image"}
             elif ftype == "formattedText":
                 val = article.get(col_name, "")
                 if val:
