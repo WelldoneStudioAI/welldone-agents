@@ -486,8 +486,26 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🎙️ _{text}_", parse_mode="Markdown")
 
         # 4. Traiter la transcription comme un message texte normal
-        update.message.text = text
-        await handle_message(update, context)
+        # (PTB v20 : Message est immutable, on passe le texte directement)
+        user_id = update.effective_user.id
+        _add_to_history(user_id, "user", text)
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+        history = _get_history(user_id)
+        agent_name, command, ctx, reply = await parse_intent(text, history[:-1])
+        if reply:
+            await update.message.reply_text(reply)
+        if agent_name and agent_name != "chat":
+            import asyncio as _asyncio
+            try:
+                result = await _asyncio.wait_for(dispatch(agent_name, command, ctx), timeout=180)
+            except _asyncio.TimeoutError:
+                result = f"⏱️ Timeout — `{agent_name}.{command}` n'a pas répondu à temps."
+            except Exception as e:
+                result = f"❌ Erreur `{agent_name}.{command}` : {e}"
+        else:
+            result = await chat_respond(text, history[:-1])
+        _add_to_history(user_id, "assistant", result)
+        await _send_md(update, result)
 
     except Exception as e:
         log.error(f"handle_voice error: {e}", exc_info=True)
