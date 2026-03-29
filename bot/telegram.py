@@ -4,7 +4,7 @@ bot/telegram.py — Interface Telegram (thin layer).
 RÈGLE : Ce fichier ne contient AUCUNE logique métier.
 Il parse les commandes et route vers core/dispatcher.py ou core/brain.py.
 """
-import logging
+import logging, io
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -447,6 +447,53 @@ async def _handle_callback_inner(update, context, query, user_id, data):
 
 # ── Setup de l'application ─────────────────────────────────────────────────────
 
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Transcrit les messages vocaux via OpenAI Whisper et les traite comme du texte."""
+    if not _is_allowed(update): return
+
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+
+    voice = update.message.voice or update.message.audio
+    if not voice:
+        await update.message.reply_text("❌ Impossible de lire le fichier audio.")
+        return
+
+    try:
+        # 1. Télécharger le fichier audio depuis Telegram
+        file = await context.bot.get_file(voice.file_id)
+        audio_bytes = await file.download_as_bytearray()
+
+        # 2. Transcrire via OpenAI Whisper
+        from openai import AsyncOpenAI
+        from config import OPENAI_API_KEY
+        client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+
+        audio_file = io.BytesIO(bytes(audio_bytes))
+        audio_file.name = "voice.ogg"  # Whisper a besoin de l'extension
+
+        transcript = await client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+            language="fr",  # Force le français — retire cette ligne pour auto-detect
+        )
+        text = transcript.text.strip()
+
+        if not text:
+            await update.message.reply_text("❌ Whisper n'a pas pu transcrire l'audio.")
+            return
+
+        # 3. Confirmer la transcription à JP
+        await update.message.reply_text(f"🎙️ _{text}_", parse_mode="Markdown")
+
+        # 4. Traiter la transcription comme un message texte normal
+        update.message.text = text
+        await handle_message(update, context)
+
+    except Exception as e:
+        log.error(f"handle_voice error: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Erreur transcription vocale : {e}")
+
+
 def build_app() -> Application:
     """Construit et retourne l'application Telegram configurée."""
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -466,6 +513,9 @@ def build_app() -> Application:
 
     # Callbacks inline keyboards
     app.add_handler(CallbackQueryHandler(handle_callback))
+
+    # Messages vocaux → Whisper → handle_message
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
 
     # Messages naturels
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
