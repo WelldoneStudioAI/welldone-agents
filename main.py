@@ -13,7 +13,11 @@ Usage :
   python main.py              → démarrage normal
   python main.py --no-health  → skip le health check au boot
 """
-import asyncio, sys, logging
+import asyncio, sys, os, logging
+
+# S'assurer que le répertoire du script est dans sys.path (fix nixpacks/railway up)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from core.log import setup_logging, get_logger
 
 setup_logging()
