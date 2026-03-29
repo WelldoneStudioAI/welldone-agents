@@ -79,39 +79,35 @@ async def main():
     )
     start_scheduler(scheduler)
 
-    log.info("main: démarrage du bot Telegram + API Paperclip...")
-
-    # 6. Démarrer le bot
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling(drop_pending_updates=False)
-
-    log.info("✅ Welldone AI Agent Team — En ligne")
-
-    # 7. API FastAPI (Paperclip HTTP Adapter) en tâche de fond
-    import os, uvicorn
+    # 6. API FastAPI dans un thread daemon séparé (isolé de l'event loop asyncio)
+    import os, uvicorn, threading
     from api.server import app as fastapi_app
     port = int(os.environ.get("PORT", 8080))
-    api_config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=port,
-                                log_level="warning", access_log=False,
-                                install_signal_handlers=False)  # ← évite que uvicorn cancel le polling Telegram
-    api_server = uvicorn.Server(api_config)
-    api_task   = asyncio.create_task(api_server.serve())
-    log.info(f"main: API Paperclip → http://0.0.0.0:{port}")
 
-    # Maintenir le process actif
-    try:
-        await asyncio.Event().wait()
-    except (KeyboardInterrupt, SystemExit):
-        log.info("main: arrêt demandé")
-    finally:
-        api_task.cancel()
-        from core.scheduler import stop_scheduler
-        stop_scheduler()
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
-        log.info("main: arrêt propre")
+    def run_api():
+        uvicorn.run(fastapi_app, host="0.0.0.0", port=port,
+                    log_level="warning", access_log=False)
+
+    api_thread = threading.Thread(target=run_api, daemon=True, name="uvicorn-api")
+    api_thread.start()
+    log.info(f"main: API Paperclip → http://0.0.0.0:{port} (thread isolé)")
+
+    # 7. Bot Telegram — démarrage propre dans l'event loop principal
+    log.info("main: démarrage du bot Telegram...")
+    async with app:
+        await app.start()
+        await app.updater.start_polling(drop_pending_updates=False)
+        log.info("✅ Welldone AI Agent Team — En ligne")
+        try:
+            await asyncio.Event().wait()
+        except (KeyboardInterrupt, SystemExit):
+            log.info("main: arrêt demandé")
+        finally:
+            from core.scheduler import stop_scheduler
+            stop_scheduler()
+            await app.updater.stop()
+            await app.stop()
+            log.info("main: arrêt propre")
 
 
 if __name__ == "__main__":
