@@ -80,17 +80,21 @@ async def main():
     start_scheduler(scheduler)
 
     # 6. API FastAPI dans un thread daemon séparé (isolé de l'event loop asyncio)
-    import os, uvicorn, threading
-    from api.server import app as fastapi_app
+    import os, threading
     port = int(os.environ.get("PORT", 8080))
+    try:
+        import uvicorn
+        from api.server import app as fastapi_app
 
-    def run_api():
-        uvicorn.run(fastapi_app, host="0.0.0.0", port=port,
-                    log_level="warning", access_log=False)
+        def run_api():
+            uvicorn.run(fastapi_app, host="0.0.0.0", port=port,
+                        log_level="warning", access_log=False)
 
-    api_thread = threading.Thread(target=run_api, daemon=True, name="uvicorn-api")
-    api_thread.start()
-    log.info(f"main: API Paperclip → http://0.0.0.0:{port} (thread isolé)")
+        api_thread = threading.Thread(target=run_api, daemon=True, name="uvicorn-api")
+        api_thread.start()
+        log.info(f"main: API Paperclip → http://0.0.0.0:{port} (thread isolé)")
+    except ImportError as e:
+        log.warning(f"main: API Paperclip désactivée ({e}) — bot Telegram continue normalement")
 
     # 7. Bot Telegram — démarrage propre dans l'event loop principal
     log.info("main: démarrage du bot Telegram...")
