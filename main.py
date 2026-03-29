@@ -84,7 +84,7 @@ async def main():
     # 6. Démarrer le bot
     await app.initialize()
     await app.start()
-    await app.updater.start_polling(drop_pending_updates=True)
+    await app.updater.start_polling(drop_pending_updates=False)
 
     log.info("✅ Welldone AI Agent Team — En ligne")
 
@@ -93,7 +93,8 @@ async def main():
     from api.server import app as fastapi_app
     port = int(os.environ.get("PORT", 8080))
     api_config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=port,
-                                log_level="warning", access_log=False)
+                                log_level="warning", access_log=False,
+                                install_signal_handlers=False)  # ← évite que uvicorn cancel le polling Telegram
     api_server = uvicorn.Server(api_config)
     api_task   = asyncio.create_task(api_server.serve())
     log.info(f"main: API Paperclip → http://0.0.0.0:{port}")
