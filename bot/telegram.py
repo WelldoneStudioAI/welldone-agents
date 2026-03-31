@@ -259,6 +259,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Messages de progression pour les opérations longues (envoyés immédiatement)
     _PROGRESS = {
+        ("blog",    "rédiger"):   "🚀 Pipeline blog lancé en arrière-plan — rédaction + images + scoring qualité.\n_Je te notifie quand c'est prêt (2-4 min)._",
         ("framer",  "rédiger"):   "✍️ Je génère l'article avec Claude puis je le pousse dans Framer...\n_(1 à 2 minutes — je te confirme quand c'est fait)_",
         ("framer",  "liste"):     "📋 Connexion à Framer CMS en cours...",
         ("framer",  "supprimer"): "🗑️ Suppression en cours...",
@@ -515,6 +516,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def build_app() -> Application:
     """Construit et retourne l'application Telegram configurée."""
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # Enregistrer le bot dans le notifier partagé (pour blog_pipeline et autres)
+    from core.telegram_notifier import set_bot
+    set_bot(app.bot, TELEGRAM_ALLOWED_USER_ID)
 
     # Commandes fixes
     app.add_handler(CommandHandler("start",  cmd_start))
