@@ -88,6 +88,17 @@ FRAMER_STAGING_URL = os.environ.get("FRAMER_STAGING_URL", "")
 # Ajouter UNSPLASH_ACCESS_KEY dans Railway pour des images de qualité
 UNSPLASH_ACCESS_KEY  = os.environ.get("UNSPLASH_ACCESS_KEY", "")
 
+# ── Gemini (génération d'images sur mesure pour le blog) ──────────────────────
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+
+# ── Cloudinary (hébergement persistant des images Gemini → CDN public) ────────
+CLOUDINARY_CLOUD_NAME  = os.environ.get("CLOUDINARY_CLOUD_NAME", "")
+CLOUDINARY_API_KEY_VAL = os.environ.get("CLOUDINARY_API_KEY", "")
+CLOUDINARY_API_SECRET  = os.environ.get("CLOUDINARY_API_SECRET", "")
+
+# ── Google Cloud Storage (images blog Gemini → CDN public) ────────────────────
+GCS_BUCKET = os.environ.get("GCS_BUCKET", "welldone-blog-images")
+
 # ── WHC Email (IMAP/SMTP — awelldone.com) ────────────────────────────────────
 WHC_IMAP_HOST = os.environ.get("WHC_IMAP_HOST", "mail.awelldone.com")
 WHC_IMAP_PORT = int(os.environ.get("WHC_IMAP_PORT", "993"))
@@ -98,3 +109,11 @@ WHC_PASSWORD  = os.environ.get("WHC_PASSWORD", "")
 
 # ── Timezone ──────────────────────────────────────────────────────────────────
 TIMEZONE = "America/Toronto"
+
+# ── Dashboard web ─────────────────────────────────────────────────────────────
+# Token d'accès au dashboard (URL: ?token=xxx ou cookie)
+DASHBOARD_SECRET = os.environ.get("DASHBOARD_SECRET", "")
+
+# ── Garde-fous agents ─────────────────────────────────────────────────────────
+CLAUDE_CALL_TIMEOUT_S = int(os.environ.get("CLAUDE_CALL_TIMEOUT_S", "90"))
+CLAUDE_SESSION_BUDGET = int(os.environ.get("CLAUDE_SESSION_BUDGET", "50000"))

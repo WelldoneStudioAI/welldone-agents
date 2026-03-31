@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>WD — Agent Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0A0A0A;
+      --bg2:      #111111;
+      --bg3:      #1A1A1A;
+      --border:   #222222;
+      --text:     #F0F0F0;
+      --muted:    #666666;
+      --accent:   #FFFFFF;
+      --green:    #4ADE80;
+      --red:      #F87171;
+      --yellow:   #FBBF24;
+      --blue:     #60A5FA;
+      --radius:   8px;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Layout ── */
+    .app {
+      display: flex;
+      flex-direction: column;
+      height: 100dvh;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 0 16px;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 0 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-mark {
+      width: 32px;
+      height: 32px;
+      background: var(--accent);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--bg);
+      letter-spacing: -0.5px;
+    }
+
+    .logo-text {
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: background 0.3s;
+    }
+    .status-dot.online { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .status-dot.error  { background: var(--red); }
+
+    /* ── Agents pills ── */
+    .agents-bar {
+      display: flex;
+      gap: 6px;
+      padding: 12px 0;
+      overflow-x: auto;
+      scrollbar-width: none;
+      flex-shrink: 0;
+    }
+    .agents-bar::-webkit-scrollbar { display: none; }
+
+    .pill {
+      padding: 4px 10px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--muted);
+      white-space: nowrap;
+      cursor: pointer;
+      transition: all 0.15s;
+      background: transparent;
+      letter-spacing: 0.03em;
+    }
+    .pill:hover, .pill.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(255,255,255,0.04);
+    }
+
+    /* ── Feed ── */
+    .feed {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .message {
+      display: flex;
+      gap: 10px;
+      animation: fadeIn 0.2s ease;
+    }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+    .message.user { flex-direction: row-reverse; }
+
+    .avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 600;
+      margin-top: 2px;
+    }
+    .avatar.user-av  { background: var(--accent); color: var(--bg); }
+    .avatar.agent-av { background: var(--bg3); color: var(--muted); border: 1px solid var(--border); }
+
+    .bubble {
+      max-width: calc(100% - 80px);
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      font-size: 13.5px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .message.user .bubble {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    .message.agent .bubble {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    .message.agent .bubble.streaming::after {
+      content: '▋';
+      animation: blink 1s step-end infinite;
+      color: var(--muted);
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .bubble .meta {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+    .bubble .badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-right: 4px;
+    }
+    .badge.reply   { background: rgba(96,165,250,0.15); color: var(--blue); }
+    .badge.result  { background: rgba(74,222,128,0.15); color: var(--green); }
+    .badge.error   { background: rgba(248,113,113,0.15); color: var(--red); }
+    .badge.progress{ background: rgba(251,191,36,0.15); color: var(--yellow); }
+
+    /* ── Input zone ── */
+    .input-area {
+      padding: 12px 0 20px;
+      flex-shrink: 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .input-row {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+
+    textarea {
+      flex: 1;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      font-size: 16px; /* ≥16px évite zoom iOS */
+      line-height: 1.5;
+      padding: 10px 14px;
+      resize: none;
+      min-height: 44px;
+      max-height: 140px;
+      transition: border-color 0.15s;
+      overflow-y: auto;
+    }
+    textarea::placeholder { color: var(--muted); }
+    textarea:focus { outline: none; border-color: #444; }
+
+    .send-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: var(--radius);
+      background: var(--accent);
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: opacity 0.15s;
+    }
+    .send-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .send-btn svg { width: 16px; height: 16px; }
+
+    /* ── Budget bar ── */
+    .budget-bar {
+      height: 2px;
+      background: var(--border);
+      border-radius: 1px;
+      margin-bottom: 10px;
+      overflow: hidden;
+    }
+    .budget-fill {
+      height: 100%;
+      background: var(--green);
+      border-radius: 1px;
+      transition: width 0.5s, background 0.3s;
+    }
+
+    /* ── Logs panel ── */
+    .logs-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--muted);
+      cursor: pointer;
+      margin-bottom: 6px;
+      user-select: none;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .logs-toggle:hover { color: var(--text); }
+    .logs-toggle .chevron { transition: transform 0.2s; display: inline-block; }
+    .logs-toggle.open .chevron { transform: rotate(180deg); }
+
+    .logs-panel {
+      display: none;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      max-height: 180px;
+      overflow-y: auto;
+      padding: 8px 12px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 11px;
+      line-height: 1.6;
+      scrollbar-width: thin;
+    }
+    .logs-panel.open { display: block; }
+
+    .log-line { display: flex; gap: 8px; }
+    .log-line .lv { width: 36px; flex-shrink: 0; }
+    .log-line .lv.INFO    { color: var(--blue); }
+    .log-line .lv.WARNING { color: var(--yellow); }
+    .log-line .lv.ERROR   { color: var(--red); }
+    .log-line .lv.DEBUG   { color: var(--muted); }
+    .log-line .la { color: var(--muted); flex-shrink: 0; min-width: 100px; }
+    .log-line .lm { color: var(--text); }
+
+    /* ── Auth screen ── */
+    .auth-screen {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100dvh;
+      gap: 16px;
+      padding: 24px;
+    }
+    .auth-screen input {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      font-size: 16px;
+      padding: 12px 16px;
+      width: 100%;
+      max-width: 320px;
+      text-align: center;
+    }
+    .auth-screen input:focus { outline: none; border-color: #444; }
+    .auth-btn {
+      padding: 12px 32px;
+      background: var(--accent);
+      color: var(--bg);
+      border: none;
+      border-radius: var(--radius);
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      max-width: 320px;
+    }
+    .auth-label {
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .auth-error { color: var(--red); font-size: 12px; }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+<!-- AUTH SCREEN -->
+<div id="auth-screen" class="auth-screen" style="display:none">
+  <div class="logo-mark" style="width:48px;height:48px;font-size:16px;border-radius:8px">WD</div>
+  <p class="auth-label">Agent Console</p>
+  <input id="token-input" type="password" placeholder="Token d'accès" autocomplete="current-password">
+  <button class="auth-btn" onclick="doAuth()">Accéder</button>
+  <p id="auth-error" class="auth-error"></p>
+</div>
+
+<!-- MAIN APP -->
+<div class="app" id="main-app" style="display:none">
+
+  <header>
+    <div class="logo">
+      <div class="logo-mark">WD</div>
+      <span class="logo-text">Agent Console</span>
+    </div>
+    <div id="status-dot" class="status-dot"></div>
+  </header>
+
+  <div class="agents-bar" id="agents-bar">
+    <button class="pill" onclick="insertCommand('rédige un article de blog sur ')">✍️ Blog</button>
+    <button class="pill" onclick="insertCommand('trie mes emails importants')">📬 Emails</button>
+    <button class="pill" onclick="insertCommand('liste mes factures impayées')">💰 Factures</button>
+    <button class="pill" onclick="insertCommand('rapport analytics complet')">📊 Analytics</button>
+    <button class="pill" onclick="insertCommand('veille contenu')">🔍 Veille</button>
+    <button class="pill" onclick="insertCommand('liste les articles du blog')">📋 Articles</button>
+  </div>
+
+  <div class="feed" id="feed"></div>
+
+  <div class="input-area">
+    <div class="budget-bar"><div class="budget-fill" id="budget-fill" style="width:100%"></div></div>
+    <div class="input-row">
+      <textarea
+        id="cmd-input"
+        placeholder="Envoie une commande…"
+        rows="1"
+        onkeydown="handleKey(event)"
+        oninput="autoResize(this)"
+      ></textarea>
+      <button class="send-btn" id="send-btn" onclick="sendCommand()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#0A0A0A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"></line>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+        </svg>
+      </button>
+    </div>
+
+    <div style="margin-top:10px">
+      <div class="logs-toggle" id="logs-toggle" onclick="toggleLogs()">
+        <span>Logs</span><span class="chevron">▾</span>
+      </div>
+      <div class="logs-panel" id="logs-panel"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────────
+const BASE = window.location.origin;
+let TOKEN   = localStorage.getItem('wd_token') || '';
+let BUDGET  = { used: 0, limit: 50000 };
+let logSinceId = 0;
+let logSSE = null;
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+async function checkAuth() {
+  // Vérifier token dans l'URL d'abord
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('token')) {
+    TOKEN = params.get('token');
+    localStorage.setItem('wd_token', TOKEN);
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+
+  if (!TOKEN) {
+    // Vérifier si le dashboard est en mode open (pas de secret configuré)
+    try {
+      const r = await fetch(`${BASE}/health`);
+      if (r.ok) { showApp(); return; }
+    } catch(e) {}
+    showAuthScreen();
+    return;
+  }
+
+  // Valider le token
+  try {
+    const r = await fetch(`${BASE}/health`);
+    if (r.ok) { showApp(); return; }
+  } catch(e) {}
+  showAuthScreen();
+}
+
+function showAuthScreen() {
+  document.getElementById('auth-screen').style.display = 'flex';
+  document.getElementById('main-app').style.display = 'none';
+}
+
+function showApp() {
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('main-app').style.display = 'flex';
+  init();
+}
+
+async function doAuth() {
+  const input = document.getElementById('token-input').value.trim();
+  if (!input) return;
+  TOKEN = input;
+  const r = await fetch(`${BASE}/health`, {
+    headers: TOKEN ? { 'Authorization': `Bearer ${TOKEN}` } : {}
+  });
+  if (r.ok) {
+    localStorage.setItem('wd_token', TOKEN);
+    showApp();
+  } else {
+    document.getElementById('auth-error').textContent = 'Token invalide';
+  }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+function init() {
+  loadAgents();
+  startLogStream();
+  setInterval(pingHealth, 15000);
+  pingHealth();
+  // Restaurer historique
+  const hist = JSON.parse(localStorage.getItem('wd_history') || '[]');
+  hist.forEach(h => appendMessage('user', h.text));
+  document.getElementById('cmd-input').focus();
+}
+
+async function pingHealth() {
+  try {
+    const r = await fetch(`${BASE}/health`);
+    document.getElementById('status-dot').className = r.ok ? 'status-dot online' : 'status-dot error';
+  } catch(e) {
+    document.getElementById('status-dot').className = 'status-dot error';
+  }
+}
+
+async function loadAgents() {
+  try {
+    const r = await apiFetch('/agents');
+    if (!r.ok) return;
+    // Agents chargés (on garde les pills prédéfinies)
+  } catch(e) {}
+}
+
+// ── Commandes ─────────────────────────────────────────────────────────────────
+async function sendCommand() {
+  const input = document.getElementById('cmd-input');
+  const text  = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  autoResize(input);
+  document.getElementById('send-btn').disabled = true;
+
+  appendMessage('user', text);
+  saveHistory(text);
+
+  // Bulle agent vide avec streaming cursor
+  const agentBubble = appendMessage('agent', '', true);
+  let fullText = '';
+
+  try {
+    const response = await apiFetch('/dashboard/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (!raw || raw === '[DONE]') continue;
+
+        let evt;
+        try { evt = JSON.parse(raw); } catch(e) { continue; }
+
+        if (evt.type === 'reply') {
+          updateBubble(agentBubble, `[REPLY]\n${evt.text}`, true);
+          fullText = `[REPLY]\n${evt.text}`;
+        } else if (evt.type === 'progress') {
+          updateBubble(agentBubble, fullText + `\n\n⏳ ${evt.text}`, true);
+        } else if (evt.type === 'result') {
+          fullText = evt.text;
+          updateBubble(agentBubble, fullText, false);
+        } else if (evt.type === 'error') {
+          updateBubble(agentBubble, `❌ ${evt.text}`, false, 'error');
+        } else if (evt.type === 'budget') {
+          updateBudget(evt.used, evt.limit);
+        } else if (evt.type === 'done') {
+          break;
+        }
+      }
+    }
+  } catch(e) {
+    updateBubble(agentBubble, `❌ Erreur connexion: ${e.message}`, false, 'error');
+  }
+
+  document.getElementById('send-btn').disabled = false;
+  scrollFeed();
+}
+
+function insertCommand(text) {
+  const input = document.getElementById('cmd-input');
+  input.value = text;
+  input.focus();
+  input.setSelectionRange(text.length, text.length);
+  autoResize(input);
+}
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+function appendMessage(role, text, streaming = false) {
+  const feed = document.getElementById('feed');
+  const wrap = document.createElement('div');
+  wrap.className = `message ${role}`;
+
+  const av = document.createElement('div');
+  av.className = role === 'user' ? 'avatar user-av' : 'avatar agent-av';
+  av.textContent = role === 'user' ? 'JP' : 'AI';
+
+  const bubble = document.createElement('div');
+  bubble.className = `bubble${streaming ? ' streaming' : ''}`;
+  bubble.textContent = text;
+
+  wrap.appendChild(av);
+  wrap.appendChild(bubble);
+  feed.appendChild(wrap);
+  scrollFeed();
+  return bubble;
+}
+
+function updateBubble(bubble, text, streaming = false, variant = '') {
+  bubble.className = `bubble${streaming ? ' streaming' : ''}`;
+  bubble.textContent = text;
+  if (variant) {
+    const badge = document.createElement('span');
+    badge.className = `badge ${variant}`;
+    badge.textContent = variant;
+    bubble.prepend(badge, ' ');
+  }
+  scrollFeed();
+}
+
+function scrollFeed() {
+  const feed = document.getElementById('feed');
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function updateBudget(used, limit) {
+  BUDGET = { used, limit };
+  const pct = Math.min(100, Math.round((used / limit) * 100));
+  const remaining = 100 - pct;
+  const fill = document.getElementById('budget-fill');
+  fill.style.width = `${remaining}%`;
+  fill.style.background = remaining > 50 ? 'var(--green)' : remaining > 20 ? 'var(--yellow)' : 'var(--red)';
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendCommand();
+  }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+}
+
+// ── Logs ──────────────────────────────────────────────────────────────────────
+function toggleLogs() {
+  const panel  = document.getElementById('logs-panel');
+  const toggle = document.getElementById('logs-toggle');
+  const open   = panel.classList.toggle('open');
+  toggle.classList.toggle('open', open);
+}
+
+function startLogStream() {
+  if (!window.EventSource) {
+    // Fallback polling
+    setInterval(pollLogs, 3000);
+    return;
+  }
+  const url = `${BASE}/logs/stream${TOKEN ? '?token=' + encodeURIComponent(TOKEN) : ''}`;
+  logSSE = new EventSource(url);
+  logSSE.onmessage = (e) => {
+    try { appendLog(JSON.parse(e.data)); } catch(err) {}
+  };
+  logSSE.onerror = () => {
+    setTimeout(startLogStream, 5000);
+    logSSE.close();
+  };
+}
+
+async function pollLogs() {
+  try {
+    const r = await apiFetch(`/logs?since=${logSinceId}&n=20`);
+    if (!r.ok) return;
+    const data = await r.json();
+    (data.logs || []).forEach(appendLog);
+  } catch(e) {}
+}
+
+function appendLog(entry) {
+  if (entry.id) logSinceId = Math.max(logSinceId, entry.id);
+  const panel = document.getElementById('logs-panel');
+  const line  = document.createElement('div');
+  line.className = 'log-line';
+
+  const ts   = new Date(entry.ts * 1000).toLocaleTimeString('fr-CA', { hour12: false });
+  const agent = (entry.agent || '').split('.').pop().slice(0, 12);
+
+  line.innerHTML = `
+    <span class="lv ${entry.level}">${entry.level.slice(0,4)}</span>
+    <span class="la">${agent.padEnd(12)}</span>
+    <span class="lm">${escHtml(entry.msg)}</span>
+  `;
+  panel.appendChild(line);
+  panel.scrollTop = panel.scrollHeight;
+
+  // Limiter à 200 lignes
+  while (panel.children.length > 200) panel.removeChild(panel.firstChild);
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── API fetch ─────────────────────────────────────────────────────────────────
+function apiFetch(path, opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  if (TOKEN) headers['Authorization'] = `Bearer ${TOKEN}`;
+  return fetch(`${BASE}${path}`, { ...opts, headers });
+}
+
+// ── History ───────────────────────────────────────────────────────────────────
+function saveHistory(text) {
+  const hist = JSON.parse(localStorage.getItem('wd_history') || '[]');
+  hist.push({ text, ts: Date.now() });
+  if (hist.length > 20) hist.shift();
+  localStorage.setItem('wd_history', JSON.stringify(hist));
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+checkAuth();
+</script>
+</body>
+</html>

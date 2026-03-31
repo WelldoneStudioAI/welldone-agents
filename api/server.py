@@ -1,5 +1,5 @@
 """
-api/server.py — Serveur HTTP FastAPI pour Paperclip HTTP Adapter.
+api/server.py — Serveur HTTP FastAPI pour Paperclip HTTP Adapter + Dashboard web.
 
 Expose chaque agent comme endpoint REST que Paperclip peut appeler.
 Tourne en parallèle du bot Telegram sur le port $PORT (Railway) ou 8080.
@@ -8,18 +8,33 @@ Format Paperclip HTTP Adapter:
   POST /agents/{name}/{command}
   Body: { "runId": "...", "agentId": "...", "taskId": "...", "context": {...} }
   Returns: { "status": "success"|"error", "result": "...", "usage": {...} }
+
+Dashboard web:
+  GET  /          → dashboard/index.html
+  POST /dashboard/command → SSE stream
+  GET  /logs      → JSON snapshot
+  GET  /logs/stream → SSE temps réel
 """
-import os, time, logging
-from fastapi import FastAPI, HTTPException, Depends, Header
+import asyncio
+import json
+import os
+import time
+import logging
+from pathlib import Path
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Any
+from typing import Any, AsyncGenerator
 
 log = logging.getLogger(__name__)
 
+DASHBOARD_DIR = Path(__file__).parent.parent / "dashboard"
+
 app = FastAPI(
     title="Welldone AI Agents",
-    description="HTTP Adapter pour Paperclip — Welldone Studio",
+    description="HTTP Adapter + Dashboard — Welldone Studio",
     version="2.0.0",
 )
 
@@ -30,8 +45,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Secret pour valider les requêtes Paperclip
-WEBHOOK_SECRET = os.environ.get("PAPERCLIP_WEBHOOK_SECRET", "")
+# Secrets
+WEBHOOK_SECRET   = os.environ.get("PAPERCLIP_WEBHOOK_SECRET", "")
+DASHBOARD_SECRET = os.environ.get("DASHBOARD_SECRET", "")
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -39,10 +55,22 @@ WEBHOOK_SECRET = os.environ.get("PAPERCLIP_WEBHOOK_SECRET", "")
 def verify_secret(authorization: str = Header(default="")):
     """Vérifie le Bearer token si PAPERCLIP_WEBHOOK_SECRET est configuré."""
     if not WEBHOOK_SECRET:
-        return  # Pas de secret configuré → open (dev local)
+        return
     token = authorization.replace("Bearer ", "").strip()
     if token != WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+
+def verify_dashboard(request: Request, authorization: str = Header(default="")):
+    """Auth dashboard — Bearer header ou ?token= query param."""
+    if not DASHBOARD_SECRET:
+        return  # Open (dev local ou pas de secret configuré)
+    token = (
+        authorization.replace("Bearer ", "").strip()
+        or request.query_params.get("token", "")
+    )
+    if token != DASHBOARD_SECRET:
+        raise HTTPException(status_code=401, detail="Token invalide")
 
 
 # ── Modèles ───────────────────────────────────────────────────────────────────
@@ -127,6 +155,126 @@ async def run_agent(
             result=f"❌ Erreur {agent_name}.{command}: {e}",
             usage={"duration_seconds": elapsed, "agent": agent_name, "command": command},
         )
+
+
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+
+@app.get("/")
+async def dashboard_index(_=Depends(verify_dashboard)):
+    """Sert le dashboard HTML."""
+    index = DASHBOARD_DIR / "index.html"
+    if index.exists():
+        return FileResponse(str(index))
+    return {"error": "Dashboard non trouvé"}
+
+
+class DashboardCommand(BaseModel):
+    text: str
+
+
+@app.post("/dashboard/command")
+async def dashboard_command(
+    payload: DashboardCommand,
+    _=Depends(verify_dashboard),
+):
+    """
+    Exécute une commande depuis le dashboard et streame la réponse via SSE.
+    Chaque événement SSE est un JSON: { type, text } ou { type: "budget", used, limit }
+    """
+    from core.brain import parse_intent, chat_respond
+    from core.dispatcher import dispatch
+    from core.guardrails import SessionBudget, BudgetExceededError, CallTimeoutError
+
+    budget = SessionBudget()
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        def sse(data: dict) -> str:
+            return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+        try:
+            # 1. Parse intent
+            agent, command, context, reply = await parse_intent(
+                payload.text, [], budget=budget
+            )
+            yield sse({"type": "budget", "used": budget.total, "limit": budget.limit})
+
+            if reply:
+                yield sse({"type": "reply", "text": reply})
+
+            yield sse({"type": "progress", "text": f"{agent}.{command} en cours…"})
+
+            # 2. Dispatch vers l'agent
+            result = await asyncio.wait_for(
+                dispatch(agent, command, context if context else None),
+                timeout=float(os.environ.get("CLAUDE_CALL_TIMEOUT_S", "90")),
+            )
+            yield sse({"type": "budget", "used": budget.total, "limit": budget.limit})
+            yield sse({"type": "result", "text": result or "✅ Opération terminée."})
+
+        except BudgetExceededError as e:
+            yield sse({"type": "error", "text": str(e)})
+        except CallTimeoutError as e:
+            yield sse({"type": "error", "text": str(e)})
+        except asyncio.TimeoutError:
+            yield sse({"type": "error", "text": "⏱️ Timeout — l'opération a pris trop de temps."})
+        except Exception as e:
+            log.error(f"dashboard.command error: {e}")
+            yield sse({"type": "error", "text": f"❌ {e}"})
+
+        yield sse({"type": "done"})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+
+@app.get("/logs")
+async def get_logs(
+    n: int = 50,
+    since: int = 0,
+    _=Depends(verify_dashboard),
+):
+    """Snapshot JSON des N derniers logs (ou depuis since_id)."""
+    from core.log_bus import bus
+    entries = bus.tail(n)
+    if since:
+        entries = [e for e in entries if e.get("id", 0) > since]
+    return {"logs": entries, "count": len(entries)}
+
+
+@app.get("/logs/stream")
+async def stream_logs(
+    request: Request,
+    since: int = 0,
+    _=Depends(verify_dashboard),
+):
+    """SSE stream des logs en temps réel."""
+    from core.log_bus import bus
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        try:
+            async for entry in bus.stream(since_id=since):
+                if await request.is_disconnected():
+                    break
+                yield f"data: {json.dumps(entry.to_dict(), ensure_ascii=False)}\n\n"
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/webhook/telegram")

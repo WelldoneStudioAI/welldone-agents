@@ -9,14 +9,16 @@ Architecture:
 Collection cible : ERDJzzQHr (Welldone Studio-Blog)
 Field map extrait live depuis l'article Wildman (référence).
 
-Images libres de droits:
-  - Unsplash API si UNSPLASH_ACCESS_KEY dispo
-  - LoremFlickr sinon (aucune clé, CC)
+Images :
+  1. Gemini Imagen 3 + Cloudinary (sur mesure Welldone Studio)
+  2. Portfolio Welldone (si FRAMER_PROJECTS_COLLECTION_ID configuré)
+  3. Lorem Picsum (fallback minimal — aucune clé requise)
 """
 import asyncio
 import json
 import logging
 import re
+import time
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -32,8 +34,10 @@ except ImportError:
 
 from agents._base import BaseAgent
 from core.brain import get_client
+import base64
 from config import (CLAUDE_MODEL, FRAMER_API_KEY, FRAMER_COLLECTION_ID,
-                    FRAMER_PROJECTS_COLLECTION_ID, FRAMER_STAGING_URL, UNSPLASH_ACCESS_KEY)
+                    FRAMER_PROJECTS_COLLECTION_ID, FRAMER_STAGING_URL,
+                    GEMINI_API_KEY, GCS_BUCKET)
 
 log = logging.getLogger(__name__)
 
@@ -277,6 +281,10 @@ class FramerClient:
         """item_ids : liste de dicts {id: str}"""
         return await self.invoke("removeCollectionItems", collection_id, item_ids, timeout=20)
 
+    async def publish_site(self):
+        """Déclenche un publish vers staging (*.framer.app) — reconstruit le site, 30-90s."""
+        return await self.invoke("publish", timeout=120.0)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Opérations Framer de haut niveau
@@ -368,6 +376,14 @@ async def framer_add_item(slug: str, field_data: dict) -> dict:
     return {"ok": True, "message": "Article créé dans Framer CMS", "result": res["data"]}
 
 
+async def framer_publish_staging() -> dict:
+    """Publie le staging Framer (*.framer.app) — nécessaire pour que l'article soit visible sans login."""
+    async def _do():
+        async with FramerClient(FRAMER_API_KEY) as c:
+            return await c.publish_site()
+    return await _framer_op(_do())
+
+
 async def framer_delete_item(item_id: str) -> dict:
     """Retourne {ok, message} ou {ok:False, error}."""
     async def _do():
@@ -381,7 +397,7 @@ async def framer_delete_item(item_id: str) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Option B — Photos du portfolio Welldone (prioritaires sur Unsplash)
+# Option B — Photos du portfolio Welldone (si Gemini indisponible)
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def framer_get_collections() -> dict:
@@ -474,78 +490,106 @@ async def _get_portfolio_images(sector: str, max_images: int = 8) -> list[dict]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Images libres de droits
+# Génération d'images Gemini × Cloudinary
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Style visuel Welldone Studio — anti-stock, éditorial / documentaire / authentique
-# Ce suffix est ajouté à chaque query Unsplash pour orienter les résultats
-_UNSPLASH_STYLE = "editorial authentic candid natural light"
-
-# Paramètres Unsplash qui filtrent vers des photos premium non-stock
-_UNSPLASH_PARAMS = "per_page=5&orientation=landscape&content_filter=high&order_by=relevant"
-
-
-def _trigger_unsplash_download(download_location: str) -> None:
+async def _generate_image_gemini(visual_context: str) -> bytes | None:
     """
-    Déclenche l'endpoint de download Unsplash — obligatoire selon leurs guidelines API.
-    https://help.unsplash.com/en/articles/2511258
+    Génère une image via Gemini Imagen 3 → retourne les bytes PNG.
+    Utilise l'esthétique Welldone Studio : minimaliste, tons neutres, lumière naturelle.
     """
-    if not download_location or not UNSPLASH_ACCESS_KEY:
-        return
+    if not GEMINI_API_KEY:
+        return None
     try:
-        req = urllib.request.Request(
-            download_location,
-            headers={"Authorization": f"Client-ID {UNSPLASH_ACCESS_KEY}"},
+        from google import genai
+        from google.genai import types as gtypes
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        prompt = (
+            "Welldone Studio aesthetic: minimalist, neutral tones, natural light, "
+            "premium textures, editorial photography style, no text, no watermarks, "
+            "no logos, commercial photography quality. "
+            f"Project context: {visual_context}"
         )
-        urllib.request.urlopen(req, timeout=5)
+        response = await asyncio.to_thread(
+            client.models.generate_images,
+            model="imagen-4.0-generate-001",
+            prompt=prompt,
+            config=gtypes.GenerateImagesConfig(
+                number_of_images=1,
+                aspect_ratio="16:9",
+                safety_filter_level="BLOCK_LOW_AND_ABOVE",
+                person_generation="ALLOW_ADULT",
+            ),
+        )
+        if response.generated_images:
+            return response.generated_images[0].image.image_bytes
     except Exception as e:
-        log.debug(f"Unsplash download tracking: {e}")
+        log.warning(f"Gemini image generation error: {e}")
+    return None
 
 
-def _search_unsplash(queries: list[str]) -> list[dict]:
+def _upload_to_gcs(image_bytes: bytes, blob_name: str) -> str | None:
     """
-    Recherche Unsplash avec style éditorial — évite les clichés stock.
-    Utilise content_filter=high + suffix de style sur chaque query.
-    Déclenche le tracking download (requis par l'API Unsplash).
+    Upload des bytes PNG vers Google Cloud Storage → URL publique permanente.
+    blob_name : ex. 'blog/mon-article-0329-img1.png'
     """
-    results = []
-    for query in queries[:4]:
-        try:
-            # Ajouter le style suffix pour guider vers photos authentiques
-            styled = f"{query} {_UNSPLASH_STYLE}"
-            q      = urllib.parse.quote(styled)
-            url    = f"https://api.unsplash.com/search/photos?query={q}&{_UNSPLASH_PARAMS}"
-            req    = urllib.request.Request(
-                url, headers={"Authorization": f"Client-ID {UNSPLASH_ACCESS_KEY}"})
-            resp   = urllib.request.urlopen(req, timeout=12)
-            data   = json.loads(resp.read())
+    if not GCS_BUCKET:
+        return None
+    try:
+        import os, json
+        from google.cloud import storage as gcs
+        from google.oauth2 import service_account
 
-            for photo in data.get("results", []):
-                # Préférer `full` pour la qualité, `regular` comme fallback
-                src = photo["urls"].get("full") or photo["urls"]["regular"]
-                alt = photo.get("alt_description") or photo.get("description") or query
-                credit = f"Photo by {photo['user']['name']} on Unsplash"
+        sa_b64 = os.environ.get("GOOGLE_SA_JSON_B64", "")
+        if sa_b64:
+            sa_info = json.loads(base64.b64decode(sa_b64))
+            creds   = service_account.Credentials.from_service_account_info(
+                sa_info, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+            client = gcs.Client(credentials=creds, project=sa_info.get("project_id"))
+        else:
+            client = gcs.Client()
 
-                # Tracking download (guidelines Unsplash)
-                _trigger_unsplash_download(photo.get("links", {}).get("download_location", ""))
+        bucket = client.bucket(GCS_BUCKET)
+        blob   = bucket.blob(blob_name)
+        blob.upload_from_string(image_bytes, content_type="image/png")
+        return f"https://storage.googleapis.com/{GCS_BUCKET}/{blob_name}"
+    except Exception as e:
+        log.warning(f"GCS upload error: {e}")
+    return None
 
-                results.append({"src": src, "alt": alt, "credit": credit})
-                if len(results) >= 8:
-                    return results
-        except Exception as e:
-            log.warning(f"Unsplash '{query}': {e}")
-    return results
 
+async def _generate_and_upload_image(visual_context: str, public_id: str) -> dict | None:
+    """
+    Pipeline complet : Gemini → bytes → GCS → URL permanente.
+    Retourne {src, alt, credit} ou None si échec.
+    """
+    img_bytes = await _generate_image_gemini(visual_context)
+    if not img_bytes:
+        return None
+    url = await asyncio.to_thread(_upload_to_gcs, img_bytes, public_id)
+    if not url:
+        return None
+    return {
+        "src":    url,
+        "alt":    visual_context[:120],
+        "credit": "Gemini AI × Welldone Studio",
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Images fallback (Gemini indisponible)
+# ══════════════════════════════════════════════════════════════════════════════
 
 def _fallback_images(queries: list[str]) -> list[dict]:
     """
-    Lorem Picsum — photos gratuites, URLs directes CDN Fastly sans redirect.
+    Lorem Picsum — fallback minimal si Gemini et portfolio sont indisponibles.
     Seed basé sur la query → image cohérente/reproductible.
     """
     results = []
     seeds = [abs(hash(q + str(i))) % 1000 for i, q in enumerate((queries * 3)[:8])]
     for i, seed in enumerate(seeds[:8]):
-        q = queries[i % len(queries)] if queries else "business"
+        q = queries[i % len(queries)] if queries else "studio"
         results.append({
             "src": f"https://picsum.photos/seed/{seed}/1200/800",
             "alt": q,
@@ -555,11 +599,8 @@ def _fallback_images(queries: list[str]) -> list[dict]:
 
 async def _get_images_async(queries: list[str], sector: str = "") -> tuple[list[dict], str]:
     """
-    Ordre de priorité :
-      1. Portfolio Welldone (FRAMER_PROJECTS_COLLECTION_ID configuré)
-      2. Unsplash (UNSPLASH_ACCESS_KEY configuré)
-      3. Picsum (fallback gratuit, aucune clé)
-    Retourne (images, source_label).
+    Fallback images quand Gemini n'est pas disponible.
+    Ordre : Portfolio Welldone → Picsum.
     """
     # 1. Portfolio Welldone
     if FRAMER_PROJECTS_COLLECTION_ID:
@@ -567,13 +608,7 @@ async def _get_images_async(queries: list[str], sector: str = "") -> tuple[list[
         if portfolio:
             return portfolio, "Portfolio Welldone"
 
-    # 2. Unsplash
-    if UNSPLASH_ACCESS_KEY:
-        imgs = await asyncio.to_thread(_search_unsplash, queries)
-        if imgs:
-            return imgs, "Unsplash"
-
-    # 3. Picsum (fallback)
+    # 2. Picsum (dernier recours)
     return _fallback_images(queries), "Picsum"
 
 
@@ -611,11 +646,11 @@ RÈGLES ABSOLUES D'ÉCRITURE :
 4. Toujours ramener à l'impact business. Exemples concrets québécois. Chiffres si possible.
 5. Écrire comme un humain expert, PAS comme une liste de bullet points déguisés en paragraphes.
 
-STYLE IMAGES (image_queries) : 4 mots-clés courts en ANGLAIS pour Unsplash.
-- Style Welldone Studio : éditorial, documentaire, authentique, lumière naturelle
+STYLE IMAGES :
+- visual_brief : intention artistique globale en 1 phrase anglaise concise — décrit la TENSION ou l'ÉMOTION centrale (ex: "The tension between digital chaos and human curation in a premium studio context")
+- image_queries : 4 mots-clés courts en ANGLAIS (contexte fallback Picsum si Gemini indisponible)
 - ✅ FAVORISE : "restaurant kitchen fire", "chef plating close up", "café interior morning light", "entrepreneur desk candid"
 - ❌ ÉVITE : "business handshake", "smiling team", "corporate meeting", "stock professional"
-- Queries spécifiques au SUJET de l'article (restaurant, dentaire, branding, etc.)
 
 SUJET : {sujet}
 
@@ -631,6 +666,7 @@ Retourne UNIQUEMENT ce JSON (aucun texte avant/après, aucun markdown) :
   "Type de Mandat": "Type de contenu (ex: Article SEO, Guide pratique, Étude de cas, Analyse)",
   "Objectif Stratégique": "But marketing (ex: Acquisition PME Montréal, Notoriété SEO, Conversion)",
 
+  "visual_brief": "Intention visuelle globale en 1 phrase anglaise — tension, émotion, concept central de l'article",
   "image_queries": ["query 1 style éditorial", "query 2", "query 3", "query 4"],
   "Hero-Image:alt": "Description précise de l'image hero idéale — sujet, ambiance, cadrage",
 
@@ -795,24 +831,71 @@ class FramerAgent(BaseAgent):
             log.error(f"framer: JSON invalide après 2 tentatives. raw[:400]={last_raw[:400]}")
             return "❌ Claude n'a pas retourné un JSON valide. Réessaie."
 
-        # ── 2. Images (portfolio Welldone > Unsplash > Picsum) ─────────────────
-        img_queries = article.get("image_queries",
-                                  [sujet, "professional photography Quebec", "business Montreal"])
-        # Normaliser image_queries si Claude a retourné des strings d'instructions
+        # ── 2. Images (Gemini Imagen 3 > portfolio Welldone > Picsum) ─────────────
+        visual_brief = article.get("visual_brief", sujet)
+        img_queries  = article.get("image_queries",
+                                   [sujet, "professional photography Quebec", "business Montreal"])
         if isinstance(img_queries, list):
             img_queries = [q for q in img_queries if isinstance(q, str) and len(q) < 80]
         if not img_queries:
             img_queries = [sujet, "professional photography Quebec"]
-        sector      = article.get("Secteur d'activité", "")
-        images, img_source = await _get_images_async(img_queries, sector)
+        sector = article.get("Secteur d'activité", "")
 
-        for i, field in enumerate(IMAGE_FIELDS):
-            if i < len(images):
-                alt_key     = f"{field}:alt"
-                article[field] = {
-                    "src": images[i]["src"],
-                    "alt": article.get(alt_key) or images[i].get("alt", ""),
-                }
+        # Tenter Gemini pour toutes les images (Hero + Images 2-8) en parallèle
+        gemini_images: list[dict | None] = []
+        gemini_active = GEMINI_API_KEY and GCS_BUCKET
+        if gemini_active:
+            log.info(f"framer.rediger: génération images Gemini (visual_brief='{visual_brief[:60]}...')")
+            tasks = []
+            ts = int(time.time())
+            for i, field in enumerate(IMAGE_FIELDS):
+                alt_key = f"{field}:alt"
+                context = article.get(alt_key) or visual_brief
+                pid     = f"blog/{_make_slug(sujet[:40])}-img{i+1}-{ts}.png"
+                tasks.append(_generate_and_upload_image(context, pid))
+            gemini_images = list(await asyncio.gather(*tasks))
+            n_ok = sum(1 for g in gemini_images if g)
+            log.info(f"framer.rediger: {n_ok}/{len(IMAGE_FIELDS)} images Gemini générées")
+
+        # Construire la liste finale d'images
+        if any(g is not None for g in gemini_images):
+            images     = []
+            img_source = "Gemini AI"
+            for i, field in enumerate(IMAGE_FIELDS):
+                alt_key = f"{field}:alt"
+                if i < len(gemini_images) and gemini_images[i]:
+                    article[field] = {
+                        "src": gemini_images[i]["src"],
+                        "alt": article.get(alt_key) or gemini_images[i].get("alt", ""),
+                    }
+                    images.append(gemini_images[i])
+                else:
+                    images.append(None)   # sera complété par le fallback ci-dessous
+
+            # Fallback Picsum pour les slots Gemini manquants (Images 5-8)
+            missing_slots = sum(1 for g in images if g is None)
+            if missing_slots:
+                fallback, _ = await _get_images_async(img_queries, sector)
+                fi = 0
+                for i, field in enumerate(IMAGE_FIELDS):
+                    if images[i] is None and fi < len(fallback):
+                        alt_key = f"{field}:alt"
+                        article[field] = {
+                            "src": fallback[fi]["src"],
+                            "alt": article.get(alt_key) or fallback[fi].get("alt", ""),
+                        }
+                        fi += 1
+        else:
+            # Fallback complet : portfolio > Picsum
+            fallback, img_source = await _get_images_async(img_queries, sector)
+            images = fallback
+            for i, field in enumerate(IMAGE_FIELDS):
+                if i < len(images):
+                    alt_key = f"{field}:alt"
+                    article[field] = {
+                        "src": images[i]["src"],
+                        "alt": article.get(alt_key) or images[i].get("alt", ""),
+                    }
 
         # ── 3. Construire le fieldData Framer (IDs exacts) ─────────────────────
         # Suffixe MMDD-HHmm pour unicité absolue (même sujet, même jour → slug différent)
@@ -861,19 +944,36 @@ class FramerAgent(BaseAgent):
                 f"🔍 Vérifie FRAMER_API_KEY dans Railway."
             )
 
-        # ── 5. Message de confirmation avec liens utiles ───────────────────────
-        img_count   = len([f for f in IMAGE_FIELDS if field_data.get(FIELD_MAP[f]["id"])])
-        img_src     = "Portfolio Welldone" if FRAMER_PROJECTS_COLLECTION_ID else (
-                      "Unsplash" if UNSPLASH_ACCESS_KEY else "Picsum")
-        editor_url  = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
+        # ── 5. Publish staging automatique ────────────────────────────────────────
         staging_url = FRAMER_STAGING_URL.rstrip("/") if FRAMER_STAGING_URL else ""
-        prod_url    = f"https://awelldone.studio/journal/{slug}"
-
+        staging_ok  = False
         if staging_url:
-            preview_url = f"{staging_url}/journal/{slug}"
+            log.info("framer.rediger: publish staging automatique...")
+            pub_res   = await framer_publish_staging()
+            staging_ok = pub_res.get("ok", False)
+            if staging_ok:
+                log.info("framer.rediger: staging publié avec succès")
+            else:
+                log.warning(f"framer.rediger: publish staging échoué: {pub_res.get('error')}")
+
+        # ── 6. Message de confirmation avec liens utiles ───────────────────────
+        img_count  = len([f for f in IMAGE_FIELDS if field_data.get(FIELD_MAP[f]["id"])])
+        img_src    = img_source if "img_source" in dir() else (
+                     "Portfolio Welldone" if FRAMER_PROJECTS_COLLECTION_ID else "Picsum")
+        editor_url = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
+        prod_url   = f"https://awelldone.studio/journal/{slug}"
+
+        if staging_url and staging_ok:
+            preview_url  = f"{staging_url}/journal/{slug}"
             publish_note = (
-                f"👀 [Prévisualiser sur le staging]({preview_url})\n"
-                f"_(Publie depuis Framer Editor pour mettre sur awelldone.studio)_"
+                f"🔗 [Voir sur le staging]({preview_url})\n"
+                f"_(Pour publier sur awelldone.studio → [Framer Editor → Deploy]({editor_url}))_"
+            )
+        elif staging_url:
+            preview_url  = f"{staging_url}/journal/{slug}"
+            publish_note = (
+                f"🔗 [Voir sur le staging]({preview_url}) _(publish en cours, attends ~1 min)_\n"
+                f"_(Pour publier sur awelldone.studio → [Framer Editor → Deploy]({editor_url}))_"
             )
         else:
             publish_note = (
@@ -882,7 +982,7 @@ class FramerAgent(BaseAgent):
             )
 
         return (
-            f"✅ *Article prêt dans Framer CMS !*\n\n"
+            f"✅ *Article publié sur le staging !*\n\n"
             f"📰 *{titre}*\n"
             f"📋 {len(field_data)} champs · 🖼️ {img_count} images ({img_src})\n\n"
             + publish_note

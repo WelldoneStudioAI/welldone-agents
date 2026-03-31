@@ -9,9 +9,20 @@ Architecture en 3 phases codées, pas dépendantes du prompt GPT :
      - Hubs low-cost (billets séparés leg1 + leg2)
   3. Toutes les recherches en parallèle → synthèse GPT-4o → Top 3
 
-Requiert : OPENAI_API_KEY + SERPAPI_KEY dans les variables d'env.
+Sources de données (ordre de priorité) :
+  1. Amadeus Flight Offers API (si AMADEUS_API_KEY + AMADEUS_API_SECRET définis)
+     - Inclut : Air Canada, WestJet, Air Transat, American, United, Delta, Sunwing, Porter
+     - Signup gratuit → https://developers.amadeus.com/register
+  2. SerpAPI Google Flights (fallback si SERPAPI_KEY défini)
+     - Utilisé avec deep_search=true pour plus de résultats
+     - Manque : Spirit, Flair, Frontier (ne distribuent via aucune API tierce)
+
+Pour Spirit/Flair/Frontier : seul Kiwi.com Tequila les capture (virtual interlining).
+Ajouter AMADEUS_API_KEY + AMADEUS_API_SECRET dans Railway quand disponibles.
+
+Requiert : OPENAI_API_KEY + (AMADEUS_API_KEY | SERPAPI_KEY) dans les variables d'env.
 """
-import asyncio, json, logging, os, requests
+import asyncio, json, logging, os, re, time, requests
 from datetime import date, timedelta
 from agents._base import BaseAgent
 
@@ -102,7 +113,6 @@ async def _extract_params(client, query: str) -> dict:
             continue
         d = date.fromisoformat(val)
         if d < today:
-            # Ajouter 1 an si la date est passée
             params[field] = d.replace(year=d.year + 1).isoformat()
             log.warning(f"voyage: date {val} dans le passé → corrigée à {params[field]}")
 
@@ -121,7 +131,6 @@ def _generate_searches(params: dict) -> list[dict]:
     destination = params.get("destination", "").upper()
     outbound    = date.fromisoformat(params["outbound_date"])
     return_d    = date.fromisoformat(params["return_date"]) if params.get("return_date") else None
-    is_roundtrip = return_d is not None
 
     departures = list(dict.fromkeys([origin, "YUL", "YQB"]))[:2]  # max 2 aéroports départ
     offsets    = [-1, 0, 1]   # J-1, J, J+1
@@ -131,7 +140,7 @@ def _generate_searches(params: dict) -> list[dict]:
     # ── Vols directs/packagés : 2 aéroports × 3 dates ────────────────────────
     for dep in departures:
         for offset in offsets:
-            ob = (outbound + timedelta(days=offset)).isoformat()
+            ob  = (outbound + timedelta(days=offset)).isoformat()
             ret = (return_d + timedelta(days=offset)).isoformat() if return_d else None
             label = f"{dep}→{destination} {ob}" + (f" retour {ret}" if ret else " (A/S)")
             searches.append({
@@ -146,9 +155,6 @@ def _generate_searches(params: dict) -> list[dict]:
             })
 
     # ── Billets séparés via hubs low-cost ─────────────────────────────────────
-    # Leg 1 : YUL → Hub (aller simple)
-    # Leg 2 : Hub → Destination (aller simple)
-    # Le retour serait Hub → YUL (aller simple séparé)
     for hub in hubs:
         ob = outbound.isoformat()
         searches.append({
@@ -173,7 +179,6 @@ def _generate_searches(params: dict) -> list[dict]:
                 "return_date":   None,
             },
         })
-        # Retour si aller-retour
         if return_d:
             ret_str = return_d.isoformat()
             searches.append({
@@ -203,53 +208,183 @@ def _generate_searches(params: dict) -> list[dict]:
     return searches
 
 
-# ── Phase 3 : Appel SerpAPI ───────────────────────────────────────────────────
+# ── Phase 3 : Appel Amadeus ───────────────────────────────────────────────────
+
+# Cache du token OAuth Amadeus (valide ~29 min)
+_amadeus_token_cache: dict = {"token": "", "expires_at": 0.0}
+
+
+def _get_amadeus_token() -> str:
+    """Récupère le token OAuth Amadeus, mis en cache 29 min."""
+    now = time.time()
+    if _amadeus_token_cache["token"] and now < _amadeus_token_cache["expires_at"]:
+        return _amadeus_token_cache["token"]
+
+    api_key    = os.environ.get("AMADEUS_API_KEY", "")
+    api_secret = os.environ.get("AMADEUS_API_SECRET", "")
+    base_url   = os.environ.get("AMADEUS_BASE_URL", "https://test.api.amadeus.com")
+
+    if not api_key or not api_secret:
+        raise ValueError("AMADEUS_API_KEY ou AMADEUS_API_SECRET manquant")
+
+    resp = requests.post(
+        f"{base_url}/v1/security/oauth2/token",
+        data={
+            "grant_type":    "client_credentials",
+            "client_id":     api_key,
+            "client_secret": api_secret,
+        },
+        timeout=10,
+    )
+    data = resp.json()
+    if "error" in data:
+        raise ValueError(f"Amadeus auth error: {data.get('error_description', data['error'])}")
+
+    token      = data["access_token"]
+    expires_in = int(data.get("expires_in", 1799))
+
+    _amadeus_token_cache["token"]      = token
+    _amadeus_token_cache["expires_at"] = now + expires_in - 60  # 1 min de marge
+
+    log.info("voyage: token Amadeus renouvelé")
+    return token
+
+
+def _parse_duration(iso_duration: str) -> str:
+    """Convertit PT5H30M → 5h30m."""
+    d = iso_duration.upper().replace("PT", "")
+    h = re.search(r"(\d+)H", d)
+    m = re.search(r"(\d+)M", d)
+    parts = []
+    if h:
+        parts.append(f"{h.group(1)}h")
+    if m:
+        parts.append(f"{m.group(1)}m")
+    return "".join(parts) or d
+
 
 def _search_flights(departure_id: str, arrival_id: str, outbound_date: str,
                     return_date: str | None = None, currency: str = "CAD") -> str:
-    """Appel synchrone SerpAPI Google Flights. Retourne un résumé texte."""
-    serpapi_key = os.environ.get("SERPAPI_KEY", "")
-    if not serpapi_key:
-        return "❌ SERPAPI_KEY manquant"
+    """
+    Recherche de vols avec fallback automatique :
+      1. Amadeus (si clés dispo)  → Air Canada, WestJet, Air Transat, etc.
+      2. SerpAPI deep_search=true → Google Flights avec plus de résultats
+    """
+    if os.environ.get("AMADEUS_API_KEY") and os.environ.get("AMADEUS_API_SECRET"):
+        return _search_amadeus(departure_id, arrival_id, outbound_date, return_date, currency)
+    elif os.environ.get("SERPAPI_KEY"):
+        return _search_serpapi(departure_id, arrival_id, outbound_date, return_date, currency)
+    else:
+        return "❌ Aucune clé API vol configurée (AMADEUS_API_KEY ou SERPAPI_KEY requis)"
 
-    flight_type = "1" if return_date else "2"  # 1=aller-retour, 2=aller simple
-    params = {
-        "engine":        "google_flights",
-        "departure_id":  departure_id,
-        "arrival_id":    arrival_id,
-        "outbound_date": outbound_date,
-        "currency":      currency,
-        "hl":            "fr",
-        "type":          flight_type,
-        "api_key":       serpapi_key,
-    }
-    if return_date:
-        params["return_date"] = return_date
 
+def _search_amadeus(departure_id: str, arrival_id: str, outbound_date: str,
+                    return_date: str | None, currency: str) -> str:
+    """Amadeus Flight Offers Search API."""
     try:
-        resp = requests.get("https://serpapi.com/search", params=params, timeout=15)
+        token    = _get_amadeus_token()
+        base_url = os.environ.get("AMADEUS_BASE_URL", "https://test.api.amadeus.com")
+
+        params: dict = {
+            "originLocationCode":      departure_id,
+            "destinationLocationCode": arrival_id,
+            "departureDate":           outbound_date,
+            "adults":                  1,
+            "currencyCode":            currency,
+            "max":                     6,
+            "nonStop":                 "false",
+        }
+        if return_date:
+            params["returnDate"] = return_date
+
+        resp = requests.get(
+            f"{base_url}/v2/shopping/flight-offers",
+            headers={"Authorization": f"Bearer {token}"},
+            params=params,
+            timeout=15,
+        )
+        data = resp.json()
+
+        if "errors" in data:
+            err = data["errors"][0] if data["errors"] else {}
+            return f"Erreur Amadeus {departure_id}→{arrival_id}: {err.get('detail', err)}"
+
+        offers = data.get("data", [])
+        if not offers:
+            return f"Aucun vol {departure_id}→{arrival_id} le {outbound_date}."
+
+        carriers: dict = data.get("dictionaries", {}).get("carriers", {})
+
+        lines = [f"=== {departure_id}→{arrival_id} ({outbound_date}) [Amadeus] ==="]
+        for i, offer in enumerate(offers[:5]):
+            price    = offer["price"]["grandTotal"]
+            cur      = offer["price"]["currency"]
+            itin     = offer["itineraries"][0]
+            duration = _parse_duration(itin.get("duration", ""))
+            segs     = itin["segments"]
+            stops    = len(segs) - 1
+            airline_codes = list(dict.fromkeys(s["carrierCode"] for s in segs))
+            airline_names = [carriers.get(c, c) for c in airline_codes]
+            lines.append(
+                f"  #{i+1}: {price} {cur} · {duration} · "
+                f"{' + '.join(airline_names)} · {stops} escale(s)"
+            )
+
+        return "\n".join(lines)
+
+    except ValueError as e:
+        return f"❌ Config Amadeus: {e}"
+    except Exception as e:
+        return f"Erreur Amadeus {departure_id}→{arrival_id}: {e}"
+
+
+def _search_serpapi(departure_id: str, arrival_id: str, outbound_date: str,
+                    return_date: str | None, currency: str) -> str:
+    """SerpAPI Google Flights avec deep_search=true pour plus de résultats."""
+    try:
+        serpapi_key = os.environ.get("SERPAPI_KEY", "")
+        flight_type = "1" if return_date else "2"  # 1=aller-retour, 2=aller simple
+
+        params: dict = {
+            "engine":        "google_flights",
+            "departure_id":  departure_id,
+            "arrival_id":    arrival_id,
+            "outbound_date": outbound_date,
+            "currency":      currency,
+            "hl":            "fr",
+            "type":          flight_type,
+            "deep_search":   "true",   # Plus de combinaisons et résultats
+            "api_key":       serpapi_key,
+        }
+        if return_date:
+            params["return_date"] = return_date
+
+        resp = requests.get("https://serpapi.com/search", params=params, timeout=20)
         data = resp.json()
 
         if "error" in data:
-            return f"Erreur: {data['error']}"
+            return f"Erreur SerpAPI: {data['error']}"
 
         all_flights = data.get("best_flights", []) + data.get("other_flights", [])
         if not all_flights:
             return f"Aucun vol {departure_id}→{arrival_id} le {outbound_date}."
 
-        lines = [f"=== {departure_id}→{arrival_id} ({outbound_date}) ==="]
-        for i, flight in enumerate(all_flights[:4]):
+        lines = [f"=== {departure_id}→{arrival_id} ({outbound_date}) [Google Flights] ==="]
+        for i, flight in enumerate(all_flights[:5]):
             price    = flight.get("price", "?")
             duration = flight.get("total_duration", 0)
             legs     = flight.get("flights", [])
             airline  = legs[0].get("airline", "?") if legs else "?"
             stops    = len(flight.get("layovers", []))
-            lines.append(f"  #{i+1}: {price} {currency} · {duration//60}h{duration%60}m · {airline} · {stops} escale(s)")
+            lines.append(
+                f"  #{i+1}: {price} {currency} · "
+                f"{duration // 60}h{duration % 60}m · {airline} · {stops} escale(s)"
+            )
 
         return "\n".join(lines)
 
     except Exception as e:
-        return f"Erreur {departure_id}→{arrival_id}: {e}"
+        return f"Erreur SerpAPI {departure_id}→{arrival_id}: {e}"
 
 
 # ── Phase 4 : Synthèse ────────────────────────────────────────────────────────
@@ -284,7 +419,6 @@ Note: si des dates alternatives ou YQB donnent de meilleures options, mets-les e
 
 async def _synthesize(client, query: str, searches: list[dict], results: list[str]) -> str:
     """Phase 4 : GPT-4o analyse tous les résultats et produit le Top 3."""
-    # Assembler les résultats en texte structuré
     data_block = "\n\n".join(
         f"[{s['label']}]\n{r}"
         for s, r in zip(searches, results)
@@ -327,6 +461,21 @@ class VoyageAgent(BaseAgent):
         if not openai_key:
             return "❌ OPENAI_API_KEY non défini"
 
+        # Vérifier qu'au moins une source de données est configurée
+        has_amadeus = bool(os.environ.get("AMADEUS_API_KEY") and os.environ.get("AMADEUS_API_SECRET"))
+        has_serpapi = bool(os.environ.get("SERPAPI_KEY"))
+        if not has_amadeus and not has_serpapi:
+            return (
+                "❌ *Aucune source de données vol configurée*\n\n"
+                "Ajoute dans Railway au moins une de ces options :\n\n"
+                "*Option A — Amadeus (recommandé) :*\n"
+                "• `AMADEUS_API_KEY` + `AMADEUS_API_SECRET`\n"
+                "Signup → https://developers.amadeus.com/register\n\n"
+                "*Option B — SerpAPI (déjà payé) :*\n"
+                "• `SERPAPI_KEY`"
+            )
+        log.info(f"voyage: source={'Amadeus' if has_amadeus else 'SerpAPI deep_search'}")
+
         client = AsyncOpenAI(api_key=openai_key)
 
         try:
@@ -346,14 +495,14 @@ class VoyageAgent(BaseAgent):
             searches = _generate_searches(params)
 
             # ── Phase 3 : Exécuter toutes les recherches en parallèle ─────────
-            log.info(f"voyage: phase 3 — {len(searches)} recherches en parallèle")
+            log.info(f"voyage: phase 3 — {len(searches)} recherches Amadeus en parallèle")
             results = await asyncio.gather(*[
                 asyncio.to_thread(_search_flights, **s["api_params"])
                 for s in searches
             ])
 
             for s, r in zip(searches, results):
-                log.info(f"voyage: [{s['label']}] → {r[:100]}")
+                log.info(f"voyage: [{s['label']}] → {r[:120]}")
 
             # ── Phase 4 : Synthèse → Top 3 ───────────────────────────────────
             log.info("voyage: phase 4 — synthèse Top 3")

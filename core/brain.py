@@ -105,6 +105,7 @@ RÈGLE: Retourne UNIQUEMENT le JSON, sans markdown, sans explication."""
 async def parse_intent(
     message: str,
     conversation_history: list[dict],
+    budget=None,
 ) -> tuple[str, str, dict, str]:
     """
     Analyse un message naturel et retourne (agent, command, context, reply).
@@ -112,19 +113,24 @@ async def parse_intent(
     Args:
         message: Message de l'utilisateur
         conversation_history: Historique des échanges (max 20 msgs)
+        budget: SessionBudget optionnel (garde-fou tokens)
 
     Returns:
         (agent_name, command, context_dict, reply_message)
     """
+    from core.guardrails import safe_claude_call, CallTimeoutError, BudgetExceededError
     history = conversation_history[-18:]  # Garder les 18 derniers + le nouveau
 
     try:
-        resp = await asyncio.to_thread(
-            get_client().messages.create,
+        resp = await safe_claude_call(
+            get_client(),
             model=CLAUDE_MODEL,
             max_tokens=500,
             system=SYSTEM_PROMPT,
             messages=history + [{"role": "user", "content": message}],
+            timeout_s=30,
+            budget=budget,
+            agent_name="brain.parse_intent",
         )
         raw = resp.content[0].text.strip()
 
@@ -151,24 +157,31 @@ async def parse_intent(
         return "chat", "respond", {"message": message}, ""
 
 
-async def chat_respond(message: str, history: list[dict]) -> str:
+async def chat_respond(message: str, history: list[dict], budget=None) -> str:
     """
     Répond à un message de conversation générale.
     Appelé quand agent="chat".
     """
+    from core.guardrails import safe_claude_call, CallTimeoutError, BudgetExceededError
     try:
         sys_prompt = """Tu es l'assistant IA de Jean-Philippe Roy, fondateur de Welldone Studio à Montréal.
 Tu l'aides avec la stratégie, la rédaction, les idées, et la gestion quotidienne de son studio.
 Ton ton : direct, concis, professionnel. En français québécois naturel."""
 
-        resp = await asyncio.to_thread(
-            get_client().messages.create,
+        resp = await safe_claude_call(
+            get_client(),
             model=CLAUDE_MODEL,
             max_tokens=1500,
             system=sys_prompt,
             messages=history[-18:] + [{"role": "user", "content": message}],
+            timeout_s=60,
+            budget=budget,
+            agent_name="brain.chat",
         )
         return resp.content[0].text
+    except (CallTimeoutError, BudgetExceededError) as e:
+        log.error(f"brain.chat guardrail: {e}")
+        return f"⚠️ {e}"
     except Exception as e:
         log.error(f"brain.chat error: {e}")
         return f"❌ Erreur Claude: {e}"

@@ -18,6 +18,10 @@ import asyncio, sys, os, logging
 # S'assurer que le répertoire du script est dans sys.path (fix nixpacks/railway up)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# ── Log bus en premier (avant setup_logging) pour capturer tous les logs ──────
+from core.log_bus import install_log_bus
+install_log_bus()
+
 from core.log import setup_logging, get_logger
 
 setup_logging()
@@ -91,6 +95,12 @@ async def main():
         from api.server import app as fastapi_app
 
         def run_api():
+            import asyncio as _aio
+            from core.log_bus import bus as _bus
+            # Créer un event loop dédié pour uvicorn et l'enregistrer dans le bus
+            loop = _aio.new_event_loop()
+            _aio.set_event_loop(loop)
+            _bus.set_loop(loop)
             uvicorn.run(fastapi_app, host="0.0.0.0", port=port,
                         log_level="warning", access_log=False)
 
