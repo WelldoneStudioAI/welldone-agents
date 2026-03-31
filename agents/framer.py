@@ -320,10 +320,6 @@ async def framer_list_items() -> dict:
         return res
 
     raw_items = res["data"] or []
-    # Log la structure du premier item pour diagnostiquer le champ "published"
-    if raw_items and isinstance(raw_items, list) and raw_items[0]:
-        sample = {k: v for k, v in raw_items[0].items() if k != "fieldData"}
-        log.info(f"framer item sample (sans fieldData): {sample}")
     simplified = []
     for item in (raw_items if isinstance(raw_items, list) else []):
         fd    = item.get("fieldData") or {}
@@ -332,20 +328,19 @@ async def framer_list_items() -> dict:
             if isinstance(field, dict) and field.get("type") == "string" and field.get("value"):
                 title = field["value"]
                 break
-        # Framer: "staged"=True → brouillon, "staged"=False → publié
-        # Si le champ n'existe pas on affiche "?" plutôt que "Brouillon" par défaut
         staged = item.get("staged")
         if staged is True:
             pub_state = False
         elif staged is False:
             pub_state = True
         else:
-            pub_state = item.get("published")   # fallback
+            pub_state = item.get("published")
         simplified.append({
-            "id":        item.get("id"),
-            "slug":      item.get("slug"),
-            "title":     title or item.get("slug") or "(sans titre)",
-            "published": pub_state,             # None = inconnu
+            "id":         item.get("id"),
+            "slug":       item.get("slug"),
+            "title":      title or item.get("slug") or "(sans titre)",
+            "published":  pub_state,
+            "field_data": fd,   # conservé pour illustrer sans cache
         })
     return {"ok": True, "items": simplified, "count": len(simplified)}
 
@@ -743,41 +738,59 @@ class FramerAgent(BaseAgent):
 
     async def illustrer(self, context: dict | None = None) -> str:
         """
-        Phase 2 : génère les images Gemini pour un article déjà publié.
+        Phase 2 : génère les images Gemini pour un article déjà dans Framer.
         context: { slug: str }  — le slug retourné par rédiger.
+        Fonctionne avec ou sans cache (résiste aux redémarrages Railway).
         """
         ctx  = context or {}
         slug = ctx.get("slug", ctx.get("sujet", ctx.get("message", ""))).strip()
 
-        # Trouver le slug dans le cache (exact ou sous-chaîne)
-        cached = _article_cache.get(slug)
-        if not cached and _article_cache:
-            # Tentative: correspondance partielle
-            for k in reversed(list(_article_cache.keys())):
-                if slug and (slug in k or k in slug):
-                    slug   = k
-                    cached = _article_cache[k]
-                    break
-            # Dernier recours : article le plus récent du cache
-            if not cached:
-                slug   = list(_article_cache.keys())[-1]
-                cached = _article_cache[slug]
-
-        if not cached:
-            return (
-                "❌ Aucun article en attente d'illustration.\n"
-                "Lance d'abord `/framer rédiger <sujet>`."
-            )
-
         if not GEMINI_API_KEY:
             return "❌ `GEMINI_API_KEY` manquant dans Railway — impossible de générer des images IA."
 
-        titre        = cached["titre"]
-        article      = cached["article"]
-        field_data   = dict(cached["field_data"])   # copie
-        img_queries  = cached["img_queries"]
-        visual_brief = cached["visual_brief"]
-        sector       = cached["sector"]
+        # ── Récupérer field_data depuis le cache ou directement Framer ────────
+        cached = _article_cache.get(slug)
+
+        # Correspondance partielle si slug incomplet
+        if not cached:
+            for k in reversed(list(_article_cache.keys())):
+                if slug and (slug in k or k in slug):
+                    slug, cached = k, _article_cache[k]
+                    break
+
+        if cached:
+            titre        = cached["titre"]
+            field_data   = dict(cached["field_data"])
+            visual_brief = cached["visual_brief"]
+            article      = cached["article"]
+        else:
+            # Cache vide (redémarrage Railway) → récupérer depuis Framer
+            log.info(f"framer.illustrer: cache vide, chargement depuis Framer pour slug={slug!r}")
+            list_res = await framer_list_items()
+            if not list_res.get("ok"):
+                return f"❌ Impossible de lire Framer: {list_res.get('error')}"
+
+            item = next(
+                (i for i in list_res.get("items", [])
+                 if slug and (i.get("slug") == slug or slug in (i.get("slug") or ""))),
+                None,
+            )
+            # Dernier recours : article le plus récent
+            if not item and list_res.get("items"):
+                item = list_res["items"][-1]
+                slug = item.get("slug", slug)
+
+            if not item:
+                return (
+                    "❌ Article introuvable dans Framer.\n"
+                    f"Slug cherché : `{slug}`\n"
+                    "Lance `/framer liste` pour voir les slugs disponibles."
+                )
+
+            titre        = item.get("title", slug)
+            field_data   = dict(item.get("field_data") or {})
+            visual_brief = slug.replace("-", " ")   # contexte minimal depuis le slug
+            article      = {}
 
         log.info(f"framer.illustrer: génération Gemini pour slug={slug}")
 
@@ -786,7 +799,8 @@ class FramerAgent(BaseAgent):
         tasks = []
         for i, field in enumerate(IMAGE_FIELDS):
             alt_key = f"{field}:alt"
-            ctx_img = article.get(alt_key) or visual_brief
+            ctx_img = article.get(alt_key) if article else None
+            ctx_img = ctx_img or visual_brief
             pid     = f"blog/{_make_slug(slug[:40])}-img{i+1}-{ts}.png"
             tasks.append(_generate_and_upload_image(ctx_img, pid))
 
