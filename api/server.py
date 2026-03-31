@@ -32,6 +32,17 @@ log = logging.getLogger(__name__)
 
 DASHBOARD_DIR = Path(__file__).parent.parent / "dashboard"
 
+# ── Pont Telegram ↔ API : event loop principal exposé pour queue_tasks ────────
+# Initialisé par bot/telegram.py via set_main_loop() au démarrage
+_main_loop: asyncio.AbstractEventLoop | None = None
+_task_manager_ref = None   # référence au TaskManager du bot Telegram
+
+def set_main_loop(loop: asyncio.AbstractEventLoop, task_manager) -> None:
+    """Appelé par bot/telegram.py pour exposer le loop et le task_manager à l'API."""
+    global _main_loop, _task_manager_ref
+    _main_loop = loop
+    _task_manager_ref = task_manager
+
 app = FastAPI(
     title="Welldone AI Agents",
     description="HTTP Adapter + Dashboard — Welldone Studio",
@@ -155,6 +166,106 @@ async def run_agent(
             result=f"❌ Erreur {agent_name}.{command}: {e}",
             usage={"duration_seconds": elapsed, "agent": agent_name, "command": command},
         )
+
+
+# ── Paperclip Task Queue ──────────────────────────────────────────────────────
+
+class TaskQueuePayload(BaseModel):
+    tasks: list[dict]          # [{agent, command, context, sujet}]
+    chat_id: int | None = None # optionnel, défaut = TELEGRAM_ALLOWED_USER_ID
+
+class TaskQueueResponse(BaseModel):
+    status: str
+    queued: int
+    message: str
+    task_ids: list[str] = []
+
+
+@app.post("/tasks/queue", response_model=TaskQueueResponse)
+async def queue_tasks(payload: TaskQueuePayload, _=Depends(verify_secret)):
+    """
+    Paperclip soumet 1 ou N tâches → exécution parallèle fire-and-forget.
+    Les résultats sont poussés dans Notion + notifiés via Telegram.
+    Guardrails : max 5 tâches, 50k tokens global, 15k/tâche, 240s/tâche.
+    """
+    from config import TELEGRAM_ALLOWED_USER_ID
+    from core.task_store import make_task
+
+    if not _task_manager_ref or not _main_loop:
+        raise HTTPException(status_code=503, detail="TaskManager non initialisé — bot Telegram pas encore démarré")
+
+    if len(payload.tasks) > 5:
+        raise HTTPException(status_code=400, detail="Max 5 tâches par requête")
+
+    chat_id = payload.chat_id or TELEGRAM_ALLOWED_USER_ID
+    tasks = [
+        make_task(
+            agent=t.get("agent", "chat"),
+            command=t.get("command", "respond"),
+            context=t.get("context", {}),
+            sujet=t.get("sujet", f"{t.get('agent')}.{t.get('command')}"),
+        )
+        for t in payload.tasks
+    ]
+
+    # Soumettre au TaskManager via le loop principal (thread-safe)
+    future = asyncio.run_coroutine_threadsafe(
+        _task_manager_ref.queue_tasks(
+            [{"agent": t.agent, "command": t.command, "context": t.context, "sujet": t.sujet} for t in tasks],
+            chat_id=chat_id,
+        ),
+        _main_loop,
+    )
+    confirm = future.result(timeout=10)
+
+    return TaskQueueResponse(
+        status="queued",
+        queued=len(tasks),
+        message=confirm,
+        task_ids=[t.id for t in tasks],
+    )
+
+
+@app.get("/tasks/status")
+async def tasks_status(_=Depends(verify_secret)):
+    """
+    Paperclip interroge l'état de toutes les tâches en cours et récentes.
+    Retourne le rapport formaté + un dict structuré pour parsing.
+    """
+    if not _task_manager_ref:
+        return {"status": "unavailable", "report": "TaskManager non initialisé"}
+
+    store = _task_manager_ref.store
+    all_tasks = list(store._tasks.values())
+
+    return {
+        "status": "ok",
+        "report": store.status_report(),
+        "counts": {
+            "running": sum(1 for t in all_tasks if t.status == "running"),
+            "queued":  sum(1 for t in all_tasks if t.status == "queued"),
+            "done":    sum(1 for t in all_tasks if t.status == "done"),
+            "failed":  sum(1 for t in all_tasks if t.status in ("failed", "budget_exceeded")),
+        },
+        "tokens_used":  store.session_tokens_used(),
+        "tokens_budget": 50_000,
+    }
+
+
+@app.post("/tasks/notify")
+async def tasks_notify(request: Request, _=Depends(verify_secret)):
+    """
+    Paperclip envoie un message texte à JP via Telegram.
+    Body: { "message": "...", "chat_id": 123 (optionnel) }
+    """
+    from core.telegram_notifier import notify
+    from config import TELEGRAM_ALLOWED_USER_ID
+    body = await request.json()
+    msg = body.get("message", "").strip()
+    if not msg:
+        raise HTTPException(status_code=400, detail="message requis")
+    await notify(msg)
+    return {"status": "sent"}
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
