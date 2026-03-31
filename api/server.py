@@ -4,10 +4,22 @@ api/server.py — Serveur HTTP FastAPI pour Paperclip HTTP Adapter + Dashboard w
 Expose chaque agent comme endpoint REST que Paperclip peut appeler.
 Tourne en parallèle du bot Telegram sur le port $PORT (Railway) ou 8080.
 
-Format Paperclip HTTP Adapter:
+Format Paperclip HTTP Adapter (format officiel Paperclip):
+  POST /paperclip/{slug}
+  Body: { "runId": "...", "agentId": "...", "companyId": "...",
+          "context": { "taskId": "...", "wakeReason": "...", "commentId": "..." } }
+  Returns: { "status": "success"|"error", "result": "...", "usage": {...} }
+
+  Mapping slug → agent/command (configurable via PAPERCLIP_AGENTS env):
+    chef-marketing   → blog.rédiger
+    chef-seo         → analytics.rapport
+    chef-design      → framer.liste
+    chef-email       → email.trier
+    veille           → veille.run
+
+Format legacy (toujours supporté):
   POST /agents/{name}/{command}
   Body: { "runId": "...", "agentId": "...", "taskId": "...", "context": {...} }
-  Returns: { "status": "success"|"error", "result": "...", "usage": {...} }
 
 Dashboard web:
   GET  /          → dashboard/index.html
@@ -60,6 +72,30 @@ app.add_middleware(
 WEBHOOK_SECRET   = os.environ.get("PAPERCLIP_WEBHOOK_SECRET", "")
 DASHBOARD_SECRET = os.environ.get("DASHBOARD_SECRET", "")
 
+# ── Mapping Paperclip slug → agent/command ────────────────────────────────────
+# Format JSON: '{"chef-marketing": ["blog", "rédiger"], "chef-seo": ["analytics", "rapport"]}'
+# Peut être surchargé via PAPERCLIP_AGENTS en variable Railway
+_DEFAULT_SLUG_MAP = {
+    "chef-marketing":  ("blog",      "rédiger"),
+    "chef-seo":        ("analytics", "rapport"),
+    "chef-design":     ("framer",    "liste"),
+    "chef-email":      ("email",     "trier"),
+    "veille":          ("veille",    "run"),
+    "blog-rediger":    ("blog",      "rédiger"),
+    "analytics":       ("analytics", "rapport"),
+    "framer-rediger":  ("framer",    "rédiger"),
+}
+
+def _get_slug_map() -> dict:
+    raw = os.environ.get("PAPERCLIP_AGENTS", "")
+    if raw:
+        try:
+            overrides = json.loads(raw)
+            return {**_DEFAULT_SLUG_MAP, **{k: tuple(v) for k, v in overrides.items()}}
+        except Exception:
+            pass
+    return _DEFAULT_SLUG_MAP
+
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -87,11 +123,29 @@ def verify_dashboard(request: Request, authorization: str = Header(default="")):
 # ── Modèles ───────────────────────────────────────────────────────────────────
 
 class PaperclipPayload(BaseModel):
+    """Format legacy (compatible avec l'ancienne version)."""
     runId: str | None = None
     agentId: str | None = None
     taskId: str | None = None
     wakeReason: str | None = "task_assigned"
     context: dict[str, Any] | None = None
+
+
+class PaperclipNativeContext(BaseModel):
+    """Contexte imbriqué tel qu'envoyé par Paperclip HTTP Adapter officiel."""
+    taskId: str | None = None
+    wakeReason: str | None = "task_assigned"
+    commentId: str | None = None
+
+
+class PaperclipNativePayload(BaseModel):
+    """Format officiel Paperclip HTTP Adapter v2.
+    POST body: { runId, agentId, companyId, context: { taskId, wakeReason, commentId } }
+    """
+    runId: str | None = None
+    agentId: str | None = None
+    companyId: str | None = None
+    context: PaperclipNativeContext | None = None
 
 
 class PaperclipResponse(BaseModel):
@@ -128,6 +182,128 @@ async def list_agents(_=Depends(verify_secret)):
             "schedules": agent.schedules,
         }
         for name, agent in REGISTRY.items()
+    }
+
+
+@app.post("/paperclip/{slug}", response_model=PaperclipResponse)
+async def paperclip_run(
+    slug: str,
+    payload: PaperclipNativePayload,
+    _=Depends(verify_secret),
+):
+    """
+    Endpoint principal pour Paperclip HTTP Adapter (format officiel v2).
+    Paperclip POST → /paperclip/{slug}
+    Le slug est configuré dans l'UI Paperclip et mappe vers un agent/command précis.
+
+    Budgets par agent (guardrails tokens) :
+      - chef-marketing / blog.rédiger   : 15 000 tokens
+      - chef-seo / analytics.rapport    : 8 000 tokens
+      - chef-design / framer.liste      : 2 000 tokens
+      - chef-email / email.trier        : 5 000 tokens
+      - veille / veille.run             : 10 000 tokens
+    """
+    from core.dispatcher import dispatch
+    from core.guardrails import SessionBudget, BudgetExceededError, CallTimeoutError
+
+    slug_map = _get_slug_map()
+    if slug not in slug_map:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Slug '{slug}' inconnu. Slugs disponibles: {list(slug_map.keys())}"
+        )
+
+    agent_name, command = slug_map[slug]
+    ctx = payload.context
+    wake_reason = ctx.wakeReason if ctx else "heartbeat"
+
+    start = time.time()
+    log.info(
+        f"paperclip: {slug} → {agent_name}.{command} | "
+        f"runId={payload.runId} | wakeReason={wake_reason}"
+    )
+
+    # Budget guardrail par agent (tokens max)
+    SLUG_BUDGETS = {
+        "chef-marketing":  15_000,
+        "blog-rediger":    15_000,
+        "framer-rediger":  15_000,
+        "chef-seo":        8_000,
+        "analytics":       8_000,
+        "chef-email":      5_000,
+        "veille":          10_000,
+        "chef-design":     2_000,
+    }
+    max_tokens = SLUG_BUDGETS.get(slug, 10_000)
+    budget = SessionBudget(max_tokens=max_tokens)
+
+    try:
+        result = await asyncio.wait_for(
+            dispatch(agent_name, command, None),
+            timeout=float(os.environ.get("CLAUDE_CALL_TIMEOUT_S", "180")),
+        )
+        elapsed = round(time.time() - start, 2)
+        log.info(f"paperclip: {slug} → succès en {elapsed}s | tokens≤{max_tokens}")
+        return PaperclipResponse(
+            status="success",
+            result=result or "✅ Terminé.",
+            usage={
+                "duration_seconds": elapsed,
+                "agent": agent_name,
+                "command": command,
+                "token_budget": max_tokens,
+                "wake_reason": wake_reason,
+                "run_id": payload.runId,
+            },
+        )
+    except BudgetExceededError as e:
+        elapsed = round(time.time() - start, 2)
+        log.warning(f"paperclip: {slug} → budget dépassé: {e}")
+        return PaperclipResponse(
+            status="error",
+            result=f"🛑 Budget tokens dépassé ({max_tokens} max): {e}",
+            usage={"duration_seconds": elapsed, "agent": agent_name, "command": command},
+        )
+    except asyncio.TimeoutError:
+        elapsed = round(time.time() - start, 2)
+        log.error(f"paperclip: {slug} → timeout après {elapsed}s")
+        return PaperclipResponse(
+            status="error",
+            result=f"⏱️ Timeout — {agent_name}.{command} a pris plus de {elapsed}s",
+            usage={"duration_seconds": elapsed, "agent": agent_name, "command": command},
+        )
+    except Exception as e:
+        elapsed = round(time.time() - start, 2)
+        log.error(f"paperclip: {slug} → erreur: {e}")
+        return PaperclipResponse(
+            status="error",
+            result=f"❌ Erreur {agent_name}.{command}: {e}",
+            usage={"duration_seconds": elapsed, "agent": agent_name, "command": command},
+        )
+
+
+@app.get("/paperclip/agents")
+async def paperclip_list_agents(_=Depends(verify_secret)):
+    """Liste les slugs Paperclip disponibles avec leur mapping agent/command."""
+    slug_map = _get_slug_map()
+    SLUG_BUDGETS = {
+        "chef-marketing":  15_000,
+        "blog-rediger":    15_000,
+        "framer-rediger":  15_000,
+        "chef-seo":        8_000,
+        "analytics":       8_000,
+        "chef-email":      5_000,
+        "veille":          10_000,
+        "chef-design":     2_000,
+    }
+    return {
+        slug: {
+            "agent": agent,
+            "command": cmd,
+            "token_budget": SLUG_BUDGETS.get(slug, 10_000),
+            "url": f"/paperclip/{slug}",
+        }
+        for slug, (agent, cmd) in slug_map.items()
     }
 
 
