@@ -563,8 +563,13 @@ async def _generate_and_upload_image(visual_context: str, public_id: str) -> dic
     """
     Pipeline complet : Gemini → bytes → GCS → URL permanente.
     Retourne {src, alt, credit} ou None si échec.
+    Timeout dur de 45s pour ne pas bloquer le pipeline global.
     """
-    img_bytes = await _generate_image_gemini(visual_context)
+    try:
+        img_bytes = await asyncio.wait_for(_generate_image_gemini(visual_context), timeout=45)
+    except asyncio.TimeoutError:
+        log.warning(f"Gemini timeout (45s) pour: {visual_context[:60]}")
+        return None
     if not img_bytes:
         return None
     url = await asyncio.to_thread(_upload_to_gcs, img_bytes, public_id)
@@ -944,17 +949,12 @@ class FramerAgent(BaseAgent):
                 f"🔍 Vérifie FRAMER_API_KEY dans Railway."
             )
 
-        # ── 5. Publish staging automatique ────────────────────────────────────────
+        # ── 5. Publish staging en arrière-plan (fire-and-forget) ──────────────────
         staging_url = FRAMER_STAGING_URL.rstrip("/") if FRAMER_STAGING_URL else ""
-        staging_ok  = False
+        staging_ok  = True   # On considère staging lancé — pas d'attente
         if staging_url:
-            log.info("framer.rediger: publish staging automatique...")
-            pub_res   = await framer_publish_staging()
-            staging_ok = pub_res.get("ok", False)
-            if staging_ok:
-                log.info("framer.rediger: staging publié avec succès")
-            else:
-                log.warning(f"framer.rediger: publish staging échoué: {pub_res.get('error')}")
+            log.info("framer.rediger: publish staging lancé en arrière-plan...")
+            asyncio.create_task(framer_publish_staging())
 
         # ── 6. Message de confirmation avec liens utiles ───────────────────────
         img_count  = len([f for f in IMAGE_FIELDS if field_data.get(FIELD_MAP[f]["id"])])
