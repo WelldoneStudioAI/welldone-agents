@@ -833,18 +833,19 @@ class FramerAgent(BaseAgent):
         if staging_url:
             asyncio.create_task(framer_publish_staging())
 
-        editor_url  = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
-        preview_url = f"{staging_url}/journal/{slug}" if staging_url else ""
-        note = (
-            f"🔗 [Voir sur le staging]({preview_url})\n"
-            f"_(Deploy → [Framer Editor]({editor_url}))_"
-        ) if preview_url else f"👉 [Framer Editor → Publish]({editor_url})"
+        editor_url = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
+        prod_url   = f"https://awelldone.studio/journal/{slug}"
+        if staging_url:
+            preview_note = f"👁 [Prévisualiser sur le staging]({staging_url}/journal/{slug})"
+        else:
+            preview_note = f"🔗 URL prod (après publish) : {prod_url}"
 
         return (
             f"🎨 *Images IA ajoutées !*\n\n"
             f"📰 *{titre}*\n"
             f"🖼️ {n_ok}/{len(IMAGE_FIELDS)} images Gemini\n\n"
-            + note
+            f"{preview_note}\n"
+            f"🚀 [Publier sur awelldone.studio]({editor_url})"
         )
 
     async def collections(self, context: dict | None = None) -> str:
@@ -1033,35 +1034,24 @@ class FramerAgent(BaseAgent):
 
         # ── 6. Message de confirmation avec liens utiles ───────────────────────
         img_count  = len([f for f in IMAGE_FIELDS if field_data.get(FIELD_MAP[f]["id"])])
-        img_src    = img_source if "img_source" in dir() else (
-                     "Portfolio Welldone" if FRAMER_PROJECTS_COLLECTION_ID else "Picsum")
+        img_src    = img_source
         editor_url = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
         prod_url   = f"https://awelldone.studio/journal/{slug}"
 
-        if staging_url and staging_ok:
+        # Lien de prévisualisation : staging si dispo, sinon prod (après publish)
+        if staging_url:
             preview_url  = f"{staging_url}/journal/{slug}"
-            publish_note = (
-                f"🔗 [Voir sur le staging]({preview_url})\n"
-                f"_(Pour publier sur awelldone.studio → [Framer Editor → Deploy]({editor_url}))_"
-            )
-        elif staging_url:
-            preview_url  = f"{staging_url}/journal/{slug}"
-            publish_note = (
-                f"🔗 [Voir sur le staging]({preview_url}) _(publish en cours, attends ~1 min)_\n"
-                f"_(Pour publier sur awelldone.studio → [Framer Editor → Deploy]({editor_url}))_"
-            )
+            preview_note = f"👁 [Prévisualiser sur le staging]({preview_url})"
         else:
-            publish_note = (
-                f"👉 [Ouvrir Framer Editor → Publish]({editor_url})\n"
-                f"🔗 URL après publish : `{prod_url}`"
-            )
+            preview_note = f"🔗 URL prod (après publish) : {prod_url}"
 
         return (
-            f"✅ *Article publié sur le staging !*\n\n"
+            f"✅ *Article créé dans Framer CMS !*\n\n"
             f"📰 *{titre}*\n"
             f"📋 {len(field_data)} champs · 🖼️ {img_count} images ({img_src})\n\n"
-            + publish_note
-            + f"\n\n🎨 *Pour ajouter les images IA :*\n`/framer illustrer {slug}`"
+            f"{preview_note}\n"
+            f"🚀 [Publier sur awelldone.studio]({editor_url})\n\n"
+            f"🎨 *Ajouter les images IA :* `/framer illustrer {slug}`"
         )
 
     async def liste(self, context: dict | None = None) -> str:
