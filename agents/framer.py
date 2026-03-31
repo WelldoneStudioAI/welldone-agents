@@ -41,6 +41,10 @@ from config import (CLAUDE_MODEL, FRAMER_API_KEY, FRAMER_COLLECTION_ID,
 
 log = logging.getLogger(__name__)
 
+# Cache inter-phases : slug → données article pour la commande illustrer
+# Durée de vie : session Railway (reset au redémarrage)
+_article_cache: dict[str, dict] = {}
+
 # ── Framer WebSocket constants ─────────────────────────────────────────────────
 # Project ID : 20 chars après '--' dans l'URL du projet Framer
 # https://framer.com/projects/Welldone-Studio--nghGT4Mav9pHCoHxYhyn-cuMch
@@ -730,11 +734,118 @@ class FramerAgent(BaseAgent):
     def commands(self):
         return {
             "rédiger":     self.rediger,
+            "illustrer":   self.illustrer,
             "liste":       self.liste,
             "supprimer":   self.supprimer,
             "collections": self.collections,
             "publier":     self.publier,
         }
+
+    async def illustrer(self, context: dict | None = None) -> str:
+        """
+        Phase 2 : génère les images Gemini pour un article déjà publié.
+        context: { slug: str }  — le slug retourné par rédiger.
+        """
+        ctx  = context or {}
+        slug = ctx.get("slug", ctx.get("sujet", ctx.get("message", ""))).strip()
+
+        # Trouver le slug dans le cache (exact ou sous-chaîne)
+        cached = _article_cache.get(slug)
+        if not cached and _article_cache:
+            # Tentative: correspondance partielle
+            for k in reversed(list(_article_cache.keys())):
+                if slug and (slug in k or k in slug):
+                    slug   = k
+                    cached = _article_cache[k]
+                    break
+            # Dernier recours : article le plus récent du cache
+            if not cached:
+                slug   = list(_article_cache.keys())[-1]
+                cached = _article_cache[slug]
+
+        if not cached:
+            return (
+                "❌ Aucun article en attente d'illustration.\n"
+                "Lance d'abord `/framer rédiger <sujet>`."
+            )
+
+        if not GEMINI_API_KEY:
+            return "❌ `GEMINI_API_KEY` manquant dans Railway — impossible de générer des images IA."
+
+        titre        = cached["titre"]
+        article      = cached["article"]
+        field_data   = dict(cached["field_data"])   # copie
+        img_queries  = cached["img_queries"]
+        visual_brief = cached["visual_brief"]
+        sector       = cached["sector"]
+
+        log.info(f"framer.illustrer: génération Gemini pour slug={slug}")
+
+        # Générer toutes les images en parallèle (timeout 45s/image)
+        ts    = int(time.time())
+        tasks = []
+        for i, field in enumerate(IMAGE_FIELDS):
+            alt_key = f"{field}:alt"
+            ctx_img = article.get(alt_key) or visual_brief
+            pid     = f"blog/{_make_slug(slug[:40])}-img{i+1}-{ts}.png"
+            tasks.append(_generate_and_upload_image(ctx_img, pid))
+
+        gemini_images = list(await asyncio.gather(*tasks))
+        n_ok = sum(1 for g in gemini_images if g)
+        log.info(f"framer.illustrer: {n_ok}/{len(IMAGE_FIELDS)} images générées")
+
+        if n_ok == 0:
+            return (
+                "⚠️ Gemini n'a généré aucune image (timeout ou erreur API).\n"
+                "L'article Framer garde ses images Picsum actuelles."
+            )
+
+        # Mettre à jour field_data avec les nouvelles images
+        for i, field in enumerate(IMAGE_FIELDS):
+            if i < len(gemini_images) and gemini_images[i]:
+                fid = FIELD_MAP.get(field, {}).get("id")
+                if fid:
+                    field_data[fid] = {"value": gemini_images[i]["src"], "type": "image"}
+
+        # Supprimer l'ancien item puis recréer avec les images IA
+        # (Framer WS n'expose pas updateCollectionItems)
+        list_res = await framer_list_items()
+        item_id  = None
+        if list_res.get("ok"):
+            for item in list_res.get("items", []):
+                if item.get("slug") == slug:
+                    item_id = item.get("id")
+                    break
+
+        if item_id:
+            await framer_delete_item(item_id)
+            log.info(f"framer.illustrer: ancien item supprimé ({item_id})")
+
+        new_res = await framer_add_item(slug, field_data)
+        if not new_res.get("ok"):
+            return f"❌ Erreur recréation Framer: {new_res.get('error', 'Inconnu')}"
+
+        # Retirer du cache (phase terminée)
+        _article_cache.pop(slug, None)
+
+        # Publish staging fire-and-forget
+        staging_url = FRAMER_STAGING_URL.rstrip("/") if FRAMER_STAGING_URL else ""
+        if staging_url:
+            asyncio.create_task(framer_publish_staging())
+
+        editor_url  = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
+        preview_url = f"{staging_url}/journal/{slug}" if staging_url else ""
+        note = (
+            f"🔗 [Voir sur le staging]({preview_url})\n"
+            f"_(Deploy → [Framer Editor]({editor_url}))_"
+        ) if preview_url else f"👉 [Framer Editor → Publish]({editor_url})"
+
+        return (
+            f"🎨 *Images IA ajoutées !*\n\n"
+            f"📰 *{titre}*\n"
+            f"🖼️ {n_ok}/{len(IMAGE_FIELDS)} images Gemini\n\n"
+            + note
+        )
 
     async def collections(self, context: dict | None = None) -> str:
         """Liste toutes les collections Framer — utile pour trouver l'ID des projets."""
@@ -836,7 +947,8 @@ class FramerAgent(BaseAgent):
             log.error(f"framer: JSON invalide après 2 tentatives. raw[:400]={last_raw[:400]}")
             return "❌ Claude n'a pas retourné un JSON valide. Réessaie."
 
-        # ── 2. Images (Gemini Imagen 3 > portfolio Welldone > Picsum) ─────────────
+        # ── 2. Images placeholder Picsum (instantané) ─────────────────────────────
+        # Les vraies images IA sont générées par la commande `illustrer` après coup.
         visual_brief = article.get("visual_brief", sujet)
         img_queries  = article.get("image_queries",
                                    [sujet, "professional photography Quebec", "business Montreal"])
@@ -846,61 +958,14 @@ class FramerAgent(BaseAgent):
             img_queries = [sujet, "professional photography Quebec"]
         sector = article.get("Secteur d'activité", "")
 
-        # Tenter Gemini pour toutes les images (Hero + Images 2-8) en parallèle
-        gemini_images: list[dict | None] = []
-        gemini_active = GEMINI_API_KEY and GCS_BUCKET
-        if gemini_active:
-            log.info(f"framer.rediger: génération images Gemini (visual_brief='{visual_brief[:60]}...')")
-            tasks = []
-            ts = int(time.time())
-            for i, field in enumerate(IMAGE_FIELDS):
+        images, img_source = await _get_images_async(img_queries, sector)
+        for i, field in enumerate(IMAGE_FIELDS):
+            if i < len(images):
                 alt_key = f"{field}:alt"
-                context = article.get(alt_key) or visual_brief
-                pid     = f"blog/{_make_slug(sujet[:40])}-img{i+1}-{ts}.png"
-                tasks.append(_generate_and_upload_image(context, pid))
-            gemini_images = list(await asyncio.gather(*tasks))
-            n_ok = sum(1 for g in gemini_images if g)
-            log.info(f"framer.rediger: {n_ok}/{len(IMAGE_FIELDS)} images Gemini générées")
-
-        # Construire la liste finale d'images
-        if any(g is not None for g in gemini_images):
-            images     = []
-            img_source = "Gemini AI"
-            for i, field in enumerate(IMAGE_FIELDS):
-                alt_key = f"{field}:alt"
-                if i < len(gemini_images) and gemini_images[i]:
-                    article[field] = {
-                        "src": gemini_images[i]["src"],
-                        "alt": article.get(alt_key) or gemini_images[i].get("alt", ""),
-                    }
-                    images.append(gemini_images[i])
-                else:
-                    images.append(None)   # sera complété par le fallback ci-dessous
-
-            # Fallback Picsum pour les slots Gemini manquants (Images 5-8)
-            missing_slots = sum(1 for g in images if g is None)
-            if missing_slots:
-                fallback, _ = await _get_images_async(img_queries, sector)
-                fi = 0
-                for i, field in enumerate(IMAGE_FIELDS):
-                    if images[i] is None and fi < len(fallback):
-                        alt_key = f"{field}:alt"
-                        article[field] = {
-                            "src": fallback[fi]["src"],
-                            "alt": article.get(alt_key) or fallback[fi].get("alt", ""),
-                        }
-                        fi += 1
-        else:
-            # Fallback complet : portfolio > Picsum
-            fallback, img_source = await _get_images_async(img_queries, sector)
-            images = fallback
-            for i, field in enumerate(IMAGE_FIELDS):
-                if i < len(images):
-                    alt_key = f"{field}:alt"
-                    article[field] = {
-                        "src": images[i]["src"],
-                        "alt": article.get(alt_key) or images[i].get("alt", ""),
-                    }
+                article[field] = {
+                    "src": images[i]["src"],
+                    "alt": article.get(alt_key) or images[i].get("alt", ""),
+                }
 
         # ── 3. Construire le fieldData Framer (IDs exacts) ─────────────────────
         # Suffixe MMDD-HHmm pour unicité absolue (même sujet, même jour → slug différent)
@@ -938,6 +1003,16 @@ class FramerAgent(BaseAgent):
         log.info(f"framer.rediger: push slug={slug} fields={len(field_data)}")
         result = await framer_add_item(slug, field_data)
         titre  = article.get("Title", sujet)
+
+        # Stocker pour la phase 2 (illustrer)
+        _article_cache[slug] = {
+            "article":     article,
+            "field_data":  field_data,
+            "img_queries": img_queries,
+            "visual_brief": visual_brief,
+            "sector":      sector,
+            "titre":       titre,
+        }
 
         if not result.get("ok"):
             err = result.get("error", "Inconnu")
@@ -986,6 +1061,7 @@ class FramerAgent(BaseAgent):
             f"📰 *{titre}*\n"
             f"📋 {len(field_data)} champs · 🖼️ {img_count} images ({img_src})\n\n"
             + publish_note
+            + f"\n\n🎨 *Pour ajouter les images IA :*\n`/framer illustrer {slug}`"
         )
 
     async def liste(self, context: dict | None = None) -> str:
