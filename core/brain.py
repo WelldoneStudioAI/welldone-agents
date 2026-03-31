@@ -29,13 +29,33 @@ Tu ne génères RIEN toi-même. Tu ne rédiges pas. Tu ne calcules pas. Tu route
 Si la demande est ambiguë → utilise "chat".
 Si la demande est claire → identifie l'agent et la commande exacte.
 
-Tu retournes UNIQUEMENT ce JSON :
+FORMAT RÉPONSE — 2 options possibles :
+
+Option A — tâche unique (défaut) :
 {
   "agent": "gmail|calendar|notion|analytics|qbo|veille|voyage|email|blog|framer|chat",
   "command": "sous-commande spécifique",
   "context": {paramètres nécessaires},
   "reply": "message court confirmant ce que tu vas faire (1 phrase max)"
 }
+
+Option B — tâches multiples (si JP demande plusieurs choses en même temps) :
+{
+  "tasks": [
+    {"agent": "framer", "command": "rédiger", "context": {"sujet": "..."}, "sujet": "Article X"},
+    {"agent": "analytics", "command": "rapport", "context": {}, "sujet": "Rapport SEO"}
+  ],
+  "reply": "X taches lancees en parallele"
+}
+
+RÈGLES MULTI-TÂCHES :
+- Utilise le format multi-tâches uniquement si JP demande explicitement plusieurs choses distinctes
+- Max 5 tâches par message. Si JP en demande plus → retourne format tâche unique avec agent="chat" et reply expliquant le refus (max 5 tâches à la fois)
+- Chaque tâche doit avoir un champ "sujet" : label court lisible (ex: "Article PME québécoises")
+- Exemples de demandes multi-tâches :
+  → "rédige un article sur X et un autre sur Y" → 2 tâches framer.rédiger
+  → "rapport SEO + article sur le branding" → analytics.rapport + framer.rédiger
+  → "3 articles sur: photographie, branding, SEO local" → 3 tâches framer.rédiger
 
 Agents disponibles et leurs responsabilités :
 - gmail: {read, send, search, scan_invoices} → emails Google / Gmail
@@ -115,9 +135,11 @@ async def parse_intent(
     message: str,
     conversation_history: list[dict],
     budget=None,
-) -> tuple[str, str, dict, str]:
+) -> tuple[str, str, dict, str] | dict:
     """
-    Analyse un message naturel et retourne (agent, command, context, reply).
+    Analyse un message naturel et retourne soit :
+    - (agent_name, command, context_dict, reply_message)  ← tâche unique
+    - dict avec clé "tasks" : {"tasks": [...], "reply": "..."}  ← multi-tâches
 
     Args:
         message: Message de l'utilisateur
@@ -125,16 +147,18 @@ async def parse_intent(
         budget: SessionBudget optionnel (garde-fou tokens)
 
     Returns:
-        (agent_name, command, context_dict, reply_message)
+        Tuple (agent, command, context, reply) pour tâche unique,
+        ou dict {"tasks": [...], "reply": "..."} pour multi-tâches.
     """
     from core.guardrails import safe_claude_call, CallTimeoutError, BudgetExceededError
     history = conversation_history[-18:]  # Garder les 18 derniers + le nouveau
+    raw = ""
 
     try:
         resp = await safe_claude_call(
             get_client(),
             model=CLAUDE_MODEL,
-            max_tokens=500,
+            max_tokens=800,
             system=SYSTEM_PROMPT,
             messages=history + [{"role": "user", "content": message}],
             timeout_s=30,
@@ -149,7 +173,16 @@ async def parse_intent(
             if raw.startswith("json"):
                 raw = raw[4:]
 
-        data    = json.loads(raw)
+        data = json.loads(raw)
+
+        # Format multi-tâches
+        if "tasks" in data:
+            tasks = data.get("tasks", [])
+            reply = data.get("reply", "")
+            log.info(f"brain: multi-tasks n={len(tasks)} reply={reply[:50]}")
+            return {"tasks": tasks, "reply": reply}
+
+        # Format tâche unique (défaut)
         agent   = data.get("agent", "chat")
         command = data.get("command", "respond")
         context = data.get("context", {})

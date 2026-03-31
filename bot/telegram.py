@@ -31,6 +31,13 @@ log = logging.getLogger(__name__)
 _conversations: dict[int, list[dict]] = {}
 MAX_HISTORY = 20
 
+# ── TaskManager (initialisé dans build_app) ───────────────────────────────────
+_task_manager = None
+
+
+def get_task_manager():
+    return _task_manager
+
 # ── Keyboard services ─────────────────────────────────────────────────────────
 SERVICE_MAP = {
     "svc_corporate":    "Photographie corporative",
@@ -139,6 +146,17 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from datetime import datetime
     now = datetime.now().strftime("%H:%M:%S")
     await update.message.reply_text(f"🟢 En ligne — {now}")
+
+
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Affiche le status des tâches parallèles en cours."""
+    if not _is_allowed(update): return
+    tm = get_task_manager()
+    if tm is None:
+        await update.message.reply_text("TaskManager non initialisé.")
+        return
+    report = tm.get_status_report()
+    await _send_md(update, report)
 
 
 async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -252,7 +270,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     history = _get_history(user_id)
-    agent_name, command, ctx, reply = await parse_intent(text, history[:-1])
+    intent_result = await parse_intent(text, history[:-1])
+
+    # ── Format multi-tâches ───────────────────────────────────────────────────
+    if isinstance(intent_result, dict) and "tasks" in intent_result:
+        tasks  = intent_result["tasks"]
+        reply  = intent_result.get("reply", f"Lancement de {len(tasks)} taches en parallele...")
+        tm = get_task_manager()
+        if tm is None:
+            await update.message.reply_text("TaskManager non disponible — relance le bot.")
+            return
+        confirm = await tm.queue_tasks(tasks, chat_id=user_id)
+        _add_to_history(user_id, "assistant", reply)
+        await update.message.reply_text(confirm)
+        return
+
+    # ── Format tâche unique (défaut) ─────────────────────────────────────────
+    agent_name, command, ctx, reply = intent_result
 
     if reply:
         await update.message.reply_text(reply)
@@ -315,6 +349,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _add_to_history(user_id, "assistant", result)
         await _send_md(update, result)
         return
+
+    # ── Agents longs → TaskManager (guardrails tokens + timeout) ────────────────
+    # Ces agents font des appels Claude lourds → doivent passer par les guardrails
+    _TASK_MANAGED_AGENTS = {
+        ("framer",    "rédiger"),
+        ("blog",      "rédiger"),
+        ("analytics", "rapport"),
+        ("analytics", "opportunities"),
+        ("veille",    "run"),
+    }
+    if (agent_name, command) in _TASK_MANAGED_AGENTS:
+        tm = get_task_manager()
+        if tm is not None:
+            sujet_label = ctx.get("sujet", f"{agent_name}.{command}")
+            tasks_payload = [{
+                "agent":   agent_name,
+                "command": command,
+                "context": ctx,
+                "sujet":   sujet_label,
+            }]
+            confirm = await tm.queue_tasks(tasks_payload, chat_id=user_id)
+            _add_to_history(user_id, "assistant", confirm)
+            if typing_task:
+                typing_task.cancel()
+            await _send_md(update, confirm)
+            return
 
     # Tous les autres agents
     import asyncio as _asyncio
@@ -515,11 +575,24 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def build_app() -> Application:
     """Construit et retourne l'application Telegram configurée."""
+    global _task_manager
+
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     # Enregistrer le bot dans le notifier partagé (pour blog_pipeline et autres)
-    from core.telegram_notifier import set_bot
+    from core.telegram_notifier import set_bot, notify
     set_bot(app.bot, TELEGRAM_ALLOWED_USER_ID)
+
+    # Initialiser le TaskManager avec le notifier et l'agent Notion
+    from core.task_store import TaskStore
+    from core.task_manager import TaskManager
+    from agents.notion import agent as notion_agent
+    _task_manager = TaskManager(
+        store=TaskStore(),
+        notifier=notify,
+        notion_agent=notion_agent,
+    )
+    log.info("TaskManager initialisé avec guardrails actifs")
 
     # Commandes fixes
     app.add_handler(CommandHandler("start",  cmd_start))
@@ -527,6 +600,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("reset",  cmd_reset))
     app.add_handler(CommandHandler("ping",   cmd_ping))
     app.add_handler(CommandHandler("health", cmd_health))
+    app.add_handler(CommandHandler("status", cmd_status))
 
     # Commandes agents (enregistrées dynamiquement après découverte)
     agents = discover_agents()
@@ -554,6 +628,7 @@ async def set_bot_commands(app: Application):
         BotCommand("help",   "Aide complète"),
         BotCommand("health", "Vérifier tous les services"),
         BotCommand("reset",  "Réinitialiser la conversation"),
+        BotCommand("status", "Status des tâches parallèles en cours"),
     ] + [
         BotCommand(name, agent.description[:50])
         for name, agent in agents.items()
