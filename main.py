@@ -166,8 +166,7 @@ async def main():
                 if agent_name not in REGISTRY:
                     raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' non trouvé")
                 agent = REGISTRY[agent_name]
-                budget = SessionBudget(max_tokens=budget_tokens,
-                                       session_id=f"paperclip.{slug}.{task_id}")
+                budget = SessionBudget(limit=budget_tokens)
                 result = await _aio.wait_for(
                     agent.run(command=command, context={"task_id": task_id,
                                                         "wake_reason": ctx.wakeReason or "task_assigned"},
@@ -175,7 +174,7 @@ async def main():
                     timeout=300,
                 )
                 return {"status": "success", "result": str(result),
-                        "usage": {"tokens_used": budget.tokens_used,
+                        "usage": {"tokens_used": budget.total,
                                   "max_tokens": budget_tokens}}
             except _aio.TimeoutError:
                 raise HTTPException(status_code=504, detail="Timeout 5 min dépassé")
