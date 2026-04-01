@@ -1,0 +1,12 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "python main.py"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# Cron job : réveille le CEO chaque matin lun-ven à 8h03 EST (13h03 UTC)
+[[crons]]
+schedule  = "3 13 * * 1-5"
+command   = "python -c \"\nimport urllib.request, urllib.parse, json\nurl = 'http://localhost:$PORT/paperclip/ceo'\ndata = json.dumps({'context': {'wakeReason': 'morning_dispatch'}}).encode()\nreq = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + __import__('os').environ.get('PAPERCLIP_WEBHOOK_SECRET', '')})\nresp = urllib.request.urlopen(req, timeout=400)\nprint(resp.read().decode()[:500])\n\""
