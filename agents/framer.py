@@ -383,6 +383,66 @@ async def framer_publish_staging() -> dict:
     return await _framer_op(_do())
 
 
+async def framer_qa_verify(slug: str) -> dict:
+    """
+    QA bloquant — vérifie qu'un article est réellement accessible après publish.
+
+    Étapes :
+      1. Vérifie que le slug existe dans la collection CMS (API Framer)
+      2. Déclenche publish() sans argument (méthode correcte — sans mode)
+      3. Vérifie que le deployment ID est valide et non vide
+      4. Construit l'URL staging et la retourne
+
+    Retourne :
+      {ok: True,  slug, deployment_id, staging_url}
+      {ok: False, slug, error, step}   — avec l'étape qui a échoué
+    """
+    staging_base = (FRAMER_STAGING_URL or "").rstrip("/")
+
+    # ── Étape 1 : slug présent dans le CMS ? ───────────────────────────────────
+    list_res = await framer_list_items()
+    if not list_res.get("ok"):
+        return {"ok": False, "slug": slug, "error": list_res.get("error"), "step": "list_items"}
+
+    found = any(item.get("slug") == slug for item in list_res.get("items", []))
+    if not found:
+        return {
+            "ok": False, "slug": slug,
+            "error": f"Slug '{slug}' introuvable dans la collection CMS après création.",
+            "step": "slug_check",
+        }
+
+    # ── Étape 2 : publish() — sans argument (méthode confirmée fonctionnelle) ──
+    async def _do_publish():
+        async with FramerClient(FRAMER_API_KEY) as c:
+            return await c.publish_site()   # invoke("publish") sans mode
+
+    pub_res = await _framer_op(_do_publish())
+    if not pub_res.get("ok"):
+        return {"ok": False, "slug": slug, "error": pub_res.get("error"), "step": "publish"}
+
+    # ── Étape 3 : deployment ID valide ? ───────────────────────────────────────
+    pub_data   = pub_res.get("data") or {}
+    deployment = pub_data.get("deployment") or {}
+    dep_id     = deployment.get("id", "")
+    if not dep_id:
+        return {
+            "ok": False, "slug": slug,
+            "error": "Publish OK mais deployment ID vide — Framer n'a pas généré de déploiement.",
+            "step": "deployment_id",
+        }
+
+    # ── Succès ─────────────────────────────────────────────────────────────────
+    staging_url = f"{staging_base}/journal/{slug}" if staging_base else ""
+    log.info(f"framer_qa_verify ✅ slug={slug} dep={dep_id} url={staging_url}")
+    return {
+        "ok":           True,
+        "slug":         slug,
+        "deployment_id": dep_id,
+        "staging_url":  staging_url,
+    }
+
+
 async def framer_delete_item(item_id: str) -> dict:
     """Retourne {ok, message} ou {ok:False, error}."""
     async def _do():
@@ -842,24 +902,25 @@ class FramerAgent(BaseAgent):
         # Retirer du cache (phase terminée)
         _article_cache.pop(slug, None)
 
-        # Publish staging fire-and-forget
-        staging_url = FRAMER_STAGING_URL.rstrip("/") if FRAMER_STAGING_URL else ""
-        if staging_url:
-            asyncio.create_task(framer_publish_staging())
-
+        # QA bloquant — vérifie slug + publish + deployment ID
         editor_url = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
-        prod_url   = f"https://awelldone.studio/journal/{slug}"
-        if staging_url:
-            preview_note = f"👁 [Prévisualiser sur le staging]({staging_url}/journal/{slug})"
-        else:
-            preview_note = f"🔗 URL prod (après publish) : {prod_url}"
+        qa = await framer_qa_verify(slug)
+        if not qa.get("ok"):
+            return (
+                f"⚠️ *Images ajoutées mais QA échoué (étape: {qa.get('step')})* \n\n"
+                f"📰 *{titre}*\n"
+                f"❌ {qa.get('error')}\n\n"
+                f"🔧 [Ouvrir l'éditeur Framer]({editor_url})"
+            )
 
+        staging_url = qa["staging_url"]
+        dep_id      = qa["deployment_id"]
         return (
-            f"🎨 *Images IA ajoutées !*\n\n"
+            f"🎨 *Images IA ajoutées et publiées !*\n\n"
             f"📰 *{titre}*\n"
-            f"🖼️ {n_ok}/{len(IMAGE_FIELDS)} images Gemini\n\n"
-            f"{preview_note}\n"
-            f"🚀 [Publier sur awelldone.studio]({editor_url})"
+            f"🖼️ {n_ok}/{len(IMAGE_FIELDS)} images Gemini\n"
+            f"🚀 Deployment: `{dep_id}`\n\n"
+            f"👁 Staging (login Framer requis) :\n{staging_url}"
         )
 
     async def collections(self, context: dict | None = None) -> str:
@@ -1039,32 +1100,36 @@ class FramerAgent(BaseAgent):
                 f"🔍 Vérifie FRAMER_API_KEY dans Railway."
             )
 
-        # ── 5. Publish staging en arrière-plan (fire-and-forget) ──────────────────
-        staging_url = FRAMER_STAGING_URL.rstrip("/") if FRAMER_STAGING_URL else ""
-        staging_ok  = True   # On considère staging lancé — pas d'attente
-        if staging_url:
-            log.info("framer.rediger: publish staging lancé en arrière-plan...")
-            asyncio.create_task(framer_publish_staging())
+        # ── 5. QA bloquant : vérifie slug dans CMS + publish + deployment ID ──────
+        log.info(f"framer.rediger: QA en cours pour slug={slug}...")
+        qa = await framer_qa_verify(slug)
 
-        # ── 6. Message de confirmation avec liens utiles ───────────────────────
         img_count  = len([f for f in IMAGE_FIELDS if field_data.get(FIELD_MAP[f]["id"])])
         img_src    = img_source
         editor_url = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
-        prod_url   = f"https://awelldone.studio/journal/{slug}"
 
-        # Lien de prévisualisation : staging si dispo, sinon prod (après publish)
-        if staging_url:
-            preview_url  = f"{staging_url}/journal/{slug}"
-            preview_note = f"👁 [Prévisualiser sur le staging]({preview_url})"
-        else:
-            preview_note = f"🔗 URL prod (après publish) : {prod_url}"
+        # ── 6. Message de confirmation — URL vérifiée ou erreur QA détaillée ──
+        if not qa.get("ok"):
+            qa_step  = qa.get("step", "inconnu")
+            qa_error = qa.get("error", "Erreur QA inconnue")
+            log.error(f"framer.rediger: QA ÉCHOUÉ étape={qa_step} — {qa_error}")
+            return (
+                f"⚠️ *Article créé mais QA échoué à l'étape '{qa_step}'*\n\n"
+                f"📰 *{titre}*\n"
+                f"❌ {qa_error}\n\n"
+                f"🔧 [Ouvrir l'éditeur Framer]({editor_url}) pour vérifier manuellement."
+            )
+
+        staging_url = qa["staging_url"]
+        dep_id      = qa["deployment_id"]
+        log.info(f"framer.rediger: QA ✅ dep={dep_id} url={staging_url}")
 
         return (
-            f"✅ *Article créé dans Framer CMS !*\n\n"
+            f"✅ *Article publié et vérifié !*\n\n"
             f"📰 *{titre}*\n"
-            f"📋 {len(field_data)} champs · 🖼️ {img_count} images ({img_src})\n\n"
-            f"{preview_note}\n"
-            f"🚀 [Publier sur awelldone.studio]({editor_url})\n\n"
+            f"📋 {len(field_data)} champs · 🖼️ {img_count} images ({img_src})\n"
+            f"🚀 Deployment: `{dep_id}`\n\n"
+            f"👁 Staging (login Framer requis) :\n{staging_url}\n\n"
             f"🎨 *Ajouter les images IA :* `/framer illustrer {slug}`"
         )
 
