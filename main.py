@@ -103,6 +103,10 @@ async def main():
 
         _WEBHOOK_SECRET = os.environ.get("PAPERCLIP_WEBHOOK_SECRET", "")
         _SLUG_MAP = {
+            # ── CEO — lit la queue Paperclip et dispatche ──────────────────────
+            "ceo":            ("ceo",       "dispatch"),
+            "ceo-status":     ("ceo",       "status"),
+            # ── Agents spécialisés ────────────────────────────────────────────
             "chef-marketing": ("blog",      "rédiger"),
             "chef-seo":       ("analytics", "rapport"),
             "chef-design":    ("framer",    "liste"),
