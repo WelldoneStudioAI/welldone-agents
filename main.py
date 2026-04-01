@@ -87,32 +87,105 @@ async def main():
     )
     start_scheduler(scheduler)
 
-    # 6. API FastAPI dans un thread daemon séparé (isolé de l'event loop asyncio)
-    import os, threading
+    # 6. API FastAPI inline — construit directement ici, zéro import externe
+    import os, threading, time as _time, json as _json
     port = int(os.environ.get("PORT", 8080))
     try:
-        import uvicorn, importlib.util
-        # Charger api/server.py par chemin absolu — bypass sys.path complètement
-        _root = os.path.dirname(os.path.abspath(__file__))
-        log.info(f"main: __file__={__file__}  _root={_root}  sys.path[:3]={sys.path[:3]}")
-        # Injecter le root dans sys.path pour les imports internes de server.py
-        if _root not in sys.path:
-            sys.path.insert(0, _root)
-        # Essai 1 : racine (server_http.py — fichier plat, plus fiable sur Railway)
-        _server_path = os.path.join(_root, "server_http.py")
-        # Essai 2 : fallback sur api/server.py si server_http.py absent
-        if not os.path.exists(_server_path):
-            _server_path = os.path.join(_root, "api", "server.py")
-        log.info(f"main: chargement FastAPI depuis {_server_path} (exists={os.path.exists(_server_path)})")
-        _spec = importlib.util.spec_from_file_location("api_server", _server_path)
-        _mod  = importlib.util.module_from_spec(_spec)
-        _spec.loader.exec_module(_mod)
-        fastapi_app = _mod.app
+        import uvicorn
+        from fastapi import FastAPI, HTTPException, Header, Request
+        from fastapi.middleware.cors import CORSMiddleware
+        from pydantic import BaseModel
+        from typing import Any
+
+        fastapi_app = FastAPI(title="Welldone AI Agents", version="2.1.0")
+        fastapi_app.add_middleware(CORSMiddleware, allow_origins=["*"],
+                                   allow_methods=["*"], allow_headers=["*"])
+
+        _WEBHOOK_SECRET = os.environ.get("PAPERCLIP_WEBHOOK_SECRET", "")
+        _SLUG_MAP = {
+            "chef-marketing": ("blog",      "rédiger"),
+            "chef-seo":       ("analytics", "rapport"),
+            "chef-design":    ("framer",    "liste"),
+            "chef-email":     ("email",     "trier"),
+            "veille":         ("veille",    "run"),
+            "blog-rediger":   ("blog",      "rédiger"),
+            "analytics":      ("analytics", "rapport"),
+            "framer-rediger": ("framer",    "rédiger"),
+        }
+
+        class _NativeCtx(BaseModel):
+            taskId: str | None = None
+            wakeReason: str | None = "task_assigned"
+            commentId: str | None = None
+
+        class _NativePayload(BaseModel):
+            runId: str | None = None
+            agentId: str | None = None
+            companyId: str | None = None
+            context: _NativeCtx | None = None
+
+        def _check_secret(authorization: str = Header(default="")):
+            if not _WEBHOOK_SECRET:
+                return
+            token = authorization.replace("Bearer ", "").strip()
+            if token != _WEBHOOK_SECRET:
+                raise HTTPException(status_code=401, detail="Invalid token")
+
+        @fastapi_app.get("/health")
+        async def _health():
+            from core.dispatcher import REGISTRY, discover_agents
+            if not REGISTRY:
+                discover_agents()
+            return {"status": "ok", "agents": list(REGISTRY.keys()),
+                    "timestamp": _time.time()}
+
+        @fastapi_app.get("/paperclip/agents")
+        async def _paperclip_agents():
+            return {"slugs": list(_SLUG_MAP.keys())}
+
+        @fastapi_app.post("/paperclip/{slug}")
+        async def _paperclip_run(slug: str, payload: _NativePayload,
+                                 authorization: str = Header(default="")):
+            _check_secret(authorization)
+            if slug not in _SLUG_MAP:
+                raise HTTPException(status_code=404,
+                                    detail=f"Slug '{slug}' inconnu. Disponibles: {list(_SLUG_MAP.keys())}")
+            agent_name, command = _SLUG_MAP[slug]
+            ctx = payload.context or _NativeCtx()
+            task_id = ctx.taskId or (payload.runId or "paperclip")
+            _budgets = {"chef-marketing": 15000, "chef-seo": 8000,
+                        "veille": 10000, "chef-design": 2000}
+            budget_tokens = _budgets.get(slug, 5000)
+
+            try:
+                from core.dispatcher import REGISTRY, discover_agents
+                from core.guardrails import SessionBudget
+                if not REGISTRY:
+                    discover_agents()
+                if agent_name not in REGISTRY:
+                    raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' non trouvé")
+                agent = REGISTRY[agent_name]
+                budget = SessionBudget(max_tokens=budget_tokens,
+                                       session_id=f"paperclip.{slug}.{task_id}")
+                import asyncio as _aio
+                result = await _aio.wait_for(
+                    agent.run(command=command, context={"task_id": task_id,
+                                                        "wake_reason": ctx.wakeReason or "task_assigned"},
+                              budget=budget),
+                    timeout=300,
+                )
+                return {"status": "success", "result": str(result),
+                        "usage": {"tokens_used": budget.tokens_used,
+                                  "max_tokens": budget_tokens}}
+            except _aio.TimeoutError:
+                raise HTTPException(status_code=504, detail="Timeout 5 min dépassé")
+            except Exception as exc:
+                log.error(f"paperclip/{slug} error: {exc}")
+                raise HTTPException(status_code=500, detail=str(exc))
 
         def run_api():
             import asyncio as _aio
             from core.log_bus import bus as _bus
-            # Créer un event loop dédié pour uvicorn et l'enregistrer dans le bus
             loop = _aio.new_event_loop()
             _aio.set_event_loop(loop)
             _bus.set_loop(loop)
@@ -121,13 +194,13 @@ async def main():
 
         api_thread = threading.Thread(target=run_api, daemon=True, name="uvicorn-api")
         api_thread.start()
-        log.info(f"main: API Paperclip → http://0.0.0.0:{port} (thread isolé)")
-    except ImportError as e:
-        import traceback, json as _json
-        log.warning(f"main: API Paperclip désactivée ({e})\n{traceback.format_exc()}")
-        # Fallback: minimal HTTP server pour que Railway ait quelque chose sur $PORT
+        log.info(f"main: API Paperclip inline → http://0.0.0.0:{port}")
+    except Exception as e:
+        import traceback
+        log.error(f"main: API inline failed ({e})\n{traceback.format_exc()}")
+        # Fallback stdlib — Railway doit toujours avoir quelque chose sur $PORT
         from http.server import HTTPServer, BaseHTTPRequestHandler
-        class _HealthHandler(BaseHTTPRequestHandler):
+        class _FallbackHandler(BaseHTTPRequestHandler):
             def do_GET(self):
                 body = _json.dumps({"status": "ok", "mode": "telegram-only"}).encode()
                 self.send_response(200)
@@ -136,17 +209,17 @@ async def main():
                 self.end_headers()
                 self.wfile.write(body)
             def do_POST(self):
-                body = _json.dumps({"error": "fastapi_unavailable"}).encode()
+                body = _json.dumps({"error": "api_unavailable"}).encode()
                 self.send_response(503)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
             def log_message(self, *args): pass
-        _srv = HTTPServer(("0.0.0.0", port), _HealthHandler)
-        _t = threading.Thread(target=_srv.serve_forever, daemon=True, name="fallback-http")
-        _t.start()
-        log.warning(f"main: fallback HTTP health server démarré sur port {port}")
+        _srv = HTTPServer(("0.0.0.0", port), _FallbackHandler)
+        threading.Thread(target=_srv.serve_forever, daemon=True,
+                         name="fallback-http").start()
+        log.warning(f"main: fallback stdlib HTTP sur port {port}")
 
     # 7. Bot Telegram — démarrage propre dans l'event loop principal
     log.info("main: démarrage du bot Telegram...")
