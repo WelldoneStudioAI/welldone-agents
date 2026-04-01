@@ -91,12 +91,19 @@ async def main():
     import os, threading
     port = int(os.environ.get("PORT", 8080))
     try:
-        import uvicorn
-        # S'assurer que le répertoire racine est dans sys.path (fix Railway/nixpacks)
+        import uvicorn, importlib.util
+        # Charger api/server.py par chemin absolu — bypass sys.path complètement
         _root = os.path.dirname(os.path.abspath(__file__))
+        log.info(f"main: __file__={__file__}  _root={_root}  sys.path[:3]={sys.path[:3]}")
+        # Injecter le root dans sys.path pour les imports internes de server.py
         if _root not in sys.path:
             sys.path.insert(0, _root)
-        from api.server import app as fastapi_app
+        _server_path = os.path.join(_root, "api", "server.py")
+        log.info(f"main: chargement FastAPI depuis {_server_path} (exists={os.path.exists(_server_path)})")
+        _spec = importlib.util.spec_from_file_location("api.server", _server_path)
+        _mod  = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        fastapi_app = _mod.app
 
         def run_api():
             import asyncio as _aio
