@@ -98,9 +98,13 @@ async def main():
         # Injecter le root dans sys.path pour les imports internes de server.py
         if _root not in sys.path:
             sys.path.insert(0, _root)
-        _server_path = os.path.join(_root, "api", "server.py")
+        # Essai 1 : racine (server_http.py — fichier plat, plus fiable sur Railway)
+        _server_path = os.path.join(_root, "server_http.py")
+        # Essai 2 : fallback sur api/server.py si server_http.py absent
+        if not os.path.exists(_server_path):
+            _server_path = os.path.join(_root, "api", "server.py")
         log.info(f"main: chargement FastAPI depuis {_server_path} (exists={os.path.exists(_server_path)})")
-        _spec = importlib.util.spec_from_file_location("api.server", _server_path)
+        _spec = importlib.util.spec_from_file_location("api_server", _server_path)
         _mod  = importlib.util.module_from_spec(_spec)
         _spec.loader.exec_module(_mod)
         fastapi_app = _mod.app
