@@ -112,7 +112,30 @@ async def main():
         api_thread.start()
         log.info(f"main: API Paperclip → http://0.0.0.0:{port} (thread isolé)")
     except ImportError as e:
-        log.warning(f"main: API Paperclip désactivée ({e}) — bot Telegram continue normalement")
+        import traceback, json as _json
+        log.warning(f"main: API Paperclip désactivée ({e})\n{traceback.format_exc()}")
+        # Fallback: minimal HTTP server pour que Railway ait quelque chose sur $PORT
+        from http.server import HTTPServer, BaseHTTPRequestHandler
+        class _HealthHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = _json.dumps({"status": "ok", "mode": "telegram-only"}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            def do_POST(self):
+                body = _json.dumps({"error": "fastapi_unavailable"}).encode()
+                self.send_response(503)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            def log_message(self, *args): pass
+        _srv = HTTPServer(("0.0.0.0", port), _HealthHandler)
+        _t = threading.Thread(target=_srv.serve_forever, daemon=True, name="fallback-http")
+        _t.start()
+        log.warning(f"main: fallback HTTP health server démarré sur port {port}")
 
     # 7. Bot Telegram — démarrage propre dans l'event loop principal
     log.info("main: démarrage du bot Telegram...")
