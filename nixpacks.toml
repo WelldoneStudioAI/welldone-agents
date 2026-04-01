@@ -7,4 +7,4 @@ cmds = [
 ]
 
 [start]
-cmd = "python /app/main.py"
+cmd = "cd /app && python main.py"
