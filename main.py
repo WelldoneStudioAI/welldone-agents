@@ -168,9 +168,8 @@ async def main():
                 agent = REGISTRY[agent_name]
                 budget = SessionBudget(limit=budget_tokens)
                 result = await _aio.wait_for(
-                    agent.run(command=command, context={"task_id": task_id,
-                                                        "wake_reason": ctx.wakeReason or "task_assigned"},
-                              budget=budget),
+                    agent.run_command(command, {"task_id": task_id,
+                                               "wake_reason": ctx.wakeReason or "task_assigned"}),
                     timeout=300,
                 )
                 return {"status": "success", "result": str(result),
