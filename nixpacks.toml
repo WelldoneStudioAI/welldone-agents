@@ -7,4 +7,4 @@ cmds = [
 ]
 
 [start]
-cmd = "python main.py"
+cmd = "PYTHONPATH=/app python main.py"
