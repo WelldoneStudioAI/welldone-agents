@@ -157,6 +157,7 @@ async def main():
                         "veille": 10000, "chef-design": 2000}
             budget_tokens = _budgets.get(slug, 5000)
 
+            import asyncio as _aio
             try:
                 from core.dispatcher import REGISTRY, discover_agents
                 from core.guardrails import SessionBudget
@@ -167,7 +168,6 @@ async def main():
                 agent = REGISTRY[agent_name]
                 budget = SessionBudget(max_tokens=budget_tokens,
                                        session_id=f"paperclip.{slug}.{task_id}")
-                import asyncio as _aio
                 result = await _aio.wait_for(
                     agent.run(command=command, context={"task_id": task_id,
                                                         "wake_reason": ctx.wakeReason or "task_assigned"},
