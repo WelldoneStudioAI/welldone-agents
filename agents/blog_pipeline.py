@@ -160,6 +160,17 @@ class BlogPipelineAgent(BaseAgent):
             log.error(f"blog_pipeline: étape 1/3 ERREUR: {e}", exc_info=True)
             article_result = {"raw": "", "sujet": sujet, "erreur": str(e)}
 
+        # ── Arrêt si étape 1 échouée — inutile d'illustrer du vide ───────────
+        if not etape1_ok:
+            log.warning("blog_pipeline: étape 1 échouée → arrêt pipeline, pas de publication")
+            await notify(
+                f"❌ *Pipeline blog arrêté — rédaction échouée*\n\n"
+                f"📝 Sujet : _{sujet[:100]}_\n"
+                f"Erreur : _{article_result.get('erreur', 'Inconnu')[:200]}_\n\n"
+                f"_Aucun article publié. Relance avec `/blog rédiger {sujet[:60]}`_"
+            )
+            return
+
         # ── Étape 2 : images ──────────────────────────────────────────────────
         log.info("blog_pipeline: étape 2/3 — framer.illustrer")
         images_ok = False
@@ -252,6 +263,37 @@ class BlogPipelineAgent(BaseAgent):
             }
 
         # ── Notification finale ───────────────────────────────────────────────
+        # ── QA Gate : score < 6 → supprimer du CMS, ne jamais notifier succès ──
+        score_final = qualite_result.get("score", 0)
+        if score_final < 6:
+            log.warning(f"blog_pipeline: QA GATE — score={score_final}/10 < 6 → suppression du CMS")
+            # Tenter de supprimer l'article si un slug a été publié
+            raw1_text = article_result.get("raw", "")
+            slug_published = _extract_slug(raw1_text)
+            if slug_published:
+                try:
+                    from agents.framer import framer_list_items, framer_delete_item
+                    list_res = await framer_list_items()
+                    if list_res.get("ok"):
+                        for item in list_res.get("items", []):
+                            if item.get("slug") == slug_published:
+                                await framer_delete_item(item["id"])
+                                log.info(f"blog_pipeline: article supprimé du CMS ({slug_published})")
+                                break
+                except Exception as del_err:
+                    log.error(f"blog_pipeline: erreur suppression CMS: {del_err}")
+
+            raison = qualite_result.get("raison", "Contenu insuffisant")
+            await notify(
+                f"🚫 *Article rejeté — non publié*\n\n"
+                f"📝 Sujet : _{sujet[:100]}_\n"
+                f"🔴 Score QA : *{score_final}/10*\n"
+                f"Raison : _{raison[:200]}_\n\n"
+                f"_L'article a été retiré du CMS. Relance avec un sujet plus ciblé._\n"
+                f"_Durée : {budget.elapsed():.0f}s | Tokens : {budget.used_tokens}/{budget.max_tokens}_"
+            )
+            return
+
         await self._notify_done(
             sujet=sujet,
             etape1_ok=etape1_ok,
@@ -304,10 +346,8 @@ class BlogPipelineAgent(BaseAgent):
         if lien:
             lines.append(f"\n🔗 {lien}")
 
-        if not ok:
-            lines.append(
-                f"\n⚠️ *Score < 6/10* — l'article a été publié mais mérite une révision manuelle."
-            )
+        # Note: score < 6 est maintenant bloqué AVANT cette fonction (QA Gate)
+        # Ce chemin ne devrait plus être atteint avec un score < 6
 
         lines.append(
             f"\n_Durée : {elapsed:.0f}s | Tokens : {tokens_used}/{budget.max_tokens}_"
@@ -352,6 +392,25 @@ def _extract_lien(text: str) -> str:
     import re
     match = re.search(r"https?://[^\s\)>\]\"']+", text)
     return match.group(0).rstrip(".,;") if match else ""
+
+
+def _extract_slug(text: str) -> str:
+    """
+    Extrait le slug d'article depuis la réponse de framer.rédiger.
+    Cherche les patterns : /journal/<slug>, Deployment: `xxx`, staging URL.
+    """
+    if not text:
+        return ""
+    import re
+    # Pattern: /journal/some-slug
+    match = re.search(r"/journal/([\w\-]+)", text)
+    if match:
+        return match.group(1)
+    # Pattern: slug=some-slug
+    match = re.search(r"slug[=:][\s`'\"]*([a-z0-9\-]{10,})", text)
+    if match:
+        return match.group(1)
+    return ""
 
 
 agent = BlogPipelineAgent()
