@@ -92,6 +92,10 @@ async def main():
     port = int(os.environ.get("PORT", 8080))
     try:
         import uvicorn
+        # S'assurer que le répertoire racine est dans sys.path (fix Railway/nixpacks)
+        _root = os.path.dirname(os.path.abspath(__file__))
+        if _root not in sys.path:
+            sys.path.insert(0, _root)
         from api.server import app as fastapi_app
 
         def run_api():
