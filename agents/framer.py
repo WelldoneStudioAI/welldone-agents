@@ -886,7 +886,12 @@ class FramerAgent(BaseAgent):
 
             titre        = item.get("title", slug)
             field_data   = dict(item.get("field_data") or {})
-            visual_brief = slug.replace("-", " ")   # contexte minimal depuis le slug
+            # Construire un brief visuel à partir du titre (meilleur que le slug brut)
+            titre_clean  = titre.replace("_", " ").strip()
+            visual_brief = (
+                f"Editorial photography for a professional business article titled: '{titre_clean}'. "
+                f"Welldone Studio aesthetic: minimalist, neutral tones, natural light, Quebec context."
+            )
             article      = {}
 
         log.info(f"framer.illustrer: génération Gemini pour slug={slug}")
