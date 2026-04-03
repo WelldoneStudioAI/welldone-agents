@@ -496,7 +496,7 @@ class ReviseurAgent(BaseAgent):
         # Exclure les champs image de la liste envoyée à Claude
         field_names = [k for k, v in field_map.items() if v.get("type") != "image"]
 
-        budget = SessionBudget(limit=8000)
+        budget = SessionBudget(limit=12000)
         client = get_client()
         prompt = (
             f"Collection Framer : `{col}` ({len(items)} items)\n\n"
@@ -508,7 +508,7 @@ class ReviseurAgent(BaseAgent):
         resp = await safe_claude_call(
             client,
             model=CLAUDE_MODEL,
-            max_tokens=2000,
+            max_tokens=4000,
             messages=[{"role": "user", "content": prompt}],
             system=_SYSTEM_ANALYSER,
             budget=budget,
