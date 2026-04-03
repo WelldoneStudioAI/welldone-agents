@@ -3,8 +3,21 @@ builder = "nixpacks"
 
 [deploy]
 startCommand = "python main.py"
+healthcheckPath = "/livez"
+healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
+
+# ── Variables critiques requises (valeurs dans le dashboard Railway) ────────────
+# TELEGRAM_BOT_TOKEN           — token bot Telegram
+# TELEGRAM_ALLOWED_USER_ID     — user ID autorisé
+# ANTHROPIC_API_KEY            — clé Claude
+# FRAMER_API_KEY               — clé API Framer CMS
+# FRAMER_COLLECTION_ID         — ID collection journal (défaut: ERDJzzQHr)
+# QBO_CLIENT_ID / QBO_CLIENT_SECRET / QBO_REALM_ID — QuickBooks
+# OPENAI_API_KEY               — Whisper transcription vocale
+# GOOGLE_SERVICE_ACCOUNT_JSON  — GA4 + Calendar
+# GOOGLE_REFRESH_TOKEN / GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET — Gmail OAuth
 
 # Cron job : réveille le CEO chaque matin lun-ven à 8h03 EST (13h03 UTC)
 [[crons]]

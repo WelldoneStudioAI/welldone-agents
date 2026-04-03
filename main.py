@@ -68,6 +68,24 @@ async def main():
 
     # 1. Découverte des agents
     agents = discover_agents()
+    from core.dispatcher import FAILED_AGENTS
+    import subprocess as _sp_boot
+    try:
+        _sha = _sp_boot.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=_sp_boot.DEVNULL, text=True
+        ).strip()
+    except Exception:
+        _sha = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "unknown")[:7]
+
+    log.info(f"[VALIDATION] commit={_sha}")
+    log.info(f"[VALIDATION] agents_loaded={list(agents.keys())}")
+    if FAILED_AGENTS:
+        for mod, err in FAILED_AGENTS.items():
+            log.error(f"[VALIDATION] agent_failed={mod} err={err[:120]}")
+        log.error(f"[VALIDATION] status=DEPLOYED_NOT_VALIDATED — {len(FAILED_AGENTS)} agent(s) en échec")
+    else:
+        log.info(f"[VALIDATION] agents_failed=none")
     log.info(f"main: {len(agents)} agents chargés: {list(agents.keys())}")
 
     # 2. Build Telegram app
@@ -146,6 +164,52 @@ async def main():
             if token != _WEBHOOK_SECRET:
                 raise HTTPException(status_code=401, detail="Invalid token")
 
+        # ── /livez — le process tourne (Railway healthcheck) ──────────────────
+        @fastapi_app.get("/livez")
+        async def _livez():
+            return {"ok": True, "service": "welldone-agents"}
+
+        # ── /healthz — preuve réelle de fonctionnement ─────────────────────────
+        @fastapi_app.get("/healthz")
+        async def _healthz():
+            import subprocess as _sp
+            from core.dispatcher import REGISTRY, FAILED_AGENTS, discover_agents
+            if not REGISTRY:
+                discover_agents()
+
+            # Vars critiques
+            _REQUIRED_VARS = [
+                "TELEGRAM_BOT_TOKEN", "ANTHROPIC_API_KEY",
+                "FRAMER_API_KEY", "TELEGRAM_ALLOWED_USER_ID",
+            ]
+            missing_vars = [v for v in _REQUIRED_VARS if not os.environ.get(v)]
+
+            # Commit SHA
+            try:
+                sha = _sp.check_output(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    stderr=_sp.DEVNULL, text=True
+                ).strip()
+            except Exception:
+                sha = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "unknown")[:7]
+
+            agents_ok     = list(REGISTRY.keys())
+            agents_failed = {k: v[:120] for k, v in FAILED_AGENTS.items()}
+            healthy = not missing_vars and not agents_failed
+
+            payload = {
+                "ok":             healthy,
+                "service":        "welldone-agents",
+                "commit":         sha,
+                "agents_loaded":  agents_ok,
+                "agents_failed":  agents_failed,
+                "missing_vars":   missing_vars,
+                "timestamp":      _time.time(),
+            }
+            from fastapi.responses import JSONResponse
+            return JSONResponse(payload, status_code=200 if healthy else 503)
+
+        # ── /health — alias legacy (Paperclip) ────────────────────────────────
         @fastapi_app.get("/health")
         async def _health():
             from core.dispatcher import REGISTRY, discover_agents
@@ -219,13 +283,11 @@ async def main():
             import asyncio as _aio
             try:
                 from core.dispatcher import REGISTRY, discover_agents
-                from core.guardrails import SessionBudget
                 if not REGISTRY:
                     discover_agents()
                 if agent_name not in REGISTRY:
                     raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' non trouvé")
                 agent = REGISTRY[agent_name]
-                budget = SessionBudget(limit=budget_tokens)
                 agent_ctx = {"task_id": task_id, "wake_reason": ctx.wakeReason or "task_assigned"}
                 if payload.sujet: agent_ctx["sujet"] = payload.sujet
                 if payload.page:  agent_ctx["page"]  = payload.page
@@ -234,8 +296,10 @@ async def main():
                     agent.run_command(command, agent_ctx),
                     timeout=300,
                 )
+                # NOTE: tokens_used non mesuré ici — chaque agent gère son propre budget.
+                # Ne pas rapporter 0 comme si c'était la vraie consommation.
                 return {"status": "success", "result": str(result),
-                        "usage": {"tokens_used": budget.total,
+                        "usage": {"tokens_measured": False,
                                   "max_tokens": budget_tokens}}
             except _aio.TimeoutError:
                 raise HTTPException(status_code=504, detail="Timeout 5 min dépassé")
