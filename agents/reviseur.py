@@ -521,7 +521,7 @@ class ReviseurAgent(BaseAgent):
             return f"❌ Réponse Claude non parseable.\n\n```\n{raw[:500]}\n```"
 
         all_guides = _load_guide()
-        guide_data["validated"]  = False
+        guide_data["validated"]  = True   # auto-validé — modifier via cmd_valider si besoin
         guide_data["created_at"] = datetime.now().isoformat()
         all_guides[col]          = guide_data
         _save_guide(all_guides)
@@ -542,10 +542,8 @@ class ReviseurAgent(BaseAgent):
             for r in rules[:5]:
                 lines.append(f"  • {r}")
         lines.append(
-            f"\n_Guide sauvegardé (non validé). Lance :_\n"
-            f"`/reviseur valider --collection {col}`\n"
-            f"_ou avec ajustements :_\n"
-            f"`/reviseur valider --collection {col} --ajustements \"tes corrections\"`"
+            f"\n✅ _Guide validé et prêt. Lance directement :_\n"
+            f"`/reviseur liste --collection {col}`"
         )
         return "\n".join(lines)
 
