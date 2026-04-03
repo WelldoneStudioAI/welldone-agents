@@ -39,10 +39,10 @@ class PipelineBudgetError(Exception):
 class PipelineBudget:
     """
     Compteur token + chrono pour l'ensemble du pipeline.
-    Budget dur : 15 000 tokens, 240s.
+    Budget dur : 15 000 tokens, 600s.
     """
     max_tokens: int = 15_000
-    max_seconds: int = 480
+    max_seconds: int = 600
 
     def __init__(self):
         self.used_tokens: int = 0
@@ -115,220 +115,162 @@ class BlogPipelineAgent(BaseAgent):
 
     async def _run_pipeline(self, sujet: str) -> None:
         """
-        Orchestre le pipeline avec auto-correction autonome.
+        Orchestre le pipeline linéaire : rédiger → illustrer → qualité → notification.
 
-        Boucle jusqu'à MAX_ATTEMPTS :
-          1. Rédiger   — avec feedback QA de la tentative précédente si applicable
-          2. Illustrer — seulement si rédaction OK
-          3. Vérifier  — score QA
-          Si score >= 6 → succès, notifie JP
-          Si score < 6  → supprime du CMS, injecte le feedback dans la prochaine tentative
-          Si MAX_ATTEMPTS atteint sans succès → notifie JP de l'échec final avec diagnostic
-        JP n'est jamais sollicité pour intervenir manuellement.
+        Pas de retry automatique — si l'étape 1 échoue, on notifie JP directement.
+        Le score qualité est informatif uniquement, l'article n'est jamais supprimé.
         """
         from core.telegram_notifier import notify
         from core.dispatcher import dispatch
 
-        MAX_ATTEMPTS = 3
         budget = PipelineBudget()
         budget.start()
 
-        qa_feedback: str = ""  # Feedback QA injecté dans les tentatives suivantes
+        article_result: dict = {}
+        images_result: dict = {}
+        qualite_result: dict = {}
+        etape1_ok = False
+        images_ok = False
+        img_count = 0
+        actual_slug = ""
 
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            log.info(f"blog_pipeline: tentative {attempt}/{MAX_ATTEMPTS} — sujet={sujet[:60]!r}")
+        # ── Étape 1 : rédaction ────────────────────────────────────────────────
+        log.info(f"blog_pipeline: étape 1 — framer.rédiger — sujet={sujet[:60]!r}")
+        try:
+            budget.check()
+            ctx_rediger: dict = {
+                "sujet": sujet,
+                "_pipeline_budget": budget.session,
+            }
+            raw1 = await asyncio.wait_for(
+                dispatch("framer", "rédiger", ctx_rediger),
+                timeout=200,  # rédiger + QA verify peut prendre jusqu'à 180s
+            )
+            article_result = {"raw": raw1, "sujet": sujet}
+            etape1_ok = True
+            actual_slug = _extract_slug(raw1)
+            if actual_slug:
+                log.info(f"blog_pipeline: slug extrait = {actual_slug!r}")
+            else:
+                log.warning("blog_pipeline: slug non trouvé dans la réponse rédiger")
+            budget.sync_tokens()
+            log.info(f"blog_pipeline: étape 1 OK — tokens={budget.used_tokens}")
+            await notify(
+                f"✍️ *Rédaction OK* — génération des images Gemini en cours…\n"
+                f"_Sujet : {sujet[:80]}_"
+            )
 
-            article_result: dict = {}
-            images_result: dict = {}
-            qualite_result: dict = {}
-            etape1_ok = False
-            images_ok = False
-            img_count = 0
-            actual_slug = ""
+        except asyncio.TimeoutError:
+            log.error("blog_pipeline: étape 1 TIMEOUT (200s)")
+            await notify(
+                f"⛔ *Pipeline blog — timeout rédaction (200s)*\n\n"
+                f"📝 _{sujet[:100]}_\n"
+                f"_Durée : {budget.elapsed():.0f}s_\n\n"
+                f"💡 Réessaie avec `/blog rédiger {sujet[:60]}`"
+            )
+            return
+        except PipelineBudgetError as e:
+            log.error(f"blog_pipeline: BUDGET ÉPUISÉ étape 1: {e}")
+            await notify(
+                f"⛔ *Pipeline blog — budget épuisé*\n\n"
+                f"📝 _{sujet[:100]}_\n"
+                f"_{e}_\n"
+                f"_Durée : {budget.elapsed():.0f}s_"
+            )
+            return
+        except Exception as e:
+            log.error(f"blog_pipeline: étape 1 ERREUR: {e}", exc_info=True)
+            await notify(
+                f"⛔ *Pipeline blog — erreur rédaction*\n\n"
+                f"📝 _{sujet[:100]}_\n"
+                f"_{str(e)[:200]}_"
+            )
+            return
 
-            # ── Étape 1 : rédaction ────────────────────────────────────────────
-            log.info(f"blog_pipeline [{attempt}]: étape 1 — framer.rédiger")
-            try:
-                budget.check()
-                # Construire le contexte — injecter le feedback QA si retry
-                ctx_rediger: dict = {
-                    "sujet": sujet,
-                    "_pipeline_budget": budget.session,
-                }
-                if qa_feedback:
-                    ctx_rediger["_qa_feedback"] = qa_feedback
-                    log.info(f"blog_pipeline [{attempt}]: feedback QA injecté → {qa_feedback[:120]}")
+        # ── Étape 2 : images ──────────────────────────────────────────────────
+        log.info("blog_pipeline: étape 2 — framer.illustrer")
+        try:
+            budget.check()
+            ctx_illustrer: dict = {"sujet": sujet}
+            if actual_slug:
+                ctx_illustrer["slug"] = actual_slug
+            raw2 = await asyncio.wait_for(
+                dispatch("framer", "illustrer", ctx_illustrer),
+                timeout=150,
+            )
+            images_result = {"raw": raw2}
+            images_ok = True
+            import re as _re
+            _m = _re.search(r'\b([1-9][0-9]?)\s*image', raw2, flags=_re.IGNORECASE)
+            img_count = int(_m.group(1)) if _m else (0 if "❌" in raw2 or "erreur" in raw2.lower() else 1)
+            log.info(f"blog_pipeline: étape 2 OK — img_count={img_count}")
+        except asyncio.TimeoutError:
+            log.warning("blog_pipeline: étape 2 TIMEOUT — continue sans images")
+            images_result = {"erreur": "timeout images 150s"}
+        except PipelineBudgetError as e:
+            log.warning(f"blog_pipeline: budget à l'étape images — continue quand même: {e}")
+            images_result = {"erreur": str(e)}
+        except Exception as e:
+            log.warning(f"blog_pipeline: étape 2 ERREUR (continue): {e}")
+            images_result = {"erreur": str(e)[:200]}
 
-                raw1 = await asyncio.wait_for(
-                    dispatch("framer", "rédiger", ctx_rediger),
-                    timeout=200,  # rédiger + QA verify peut prendre jusqu'à 180s
-                )
-                article_result = {"raw": raw1, "sujet": sujet}
-                etape1_ok = True
-                actual_slug = _extract_slug(raw1)
-                if actual_slug:
-                    log.info(f"blog_pipeline [{attempt}]: slug extrait = {actual_slug!r}")
-                else:
-                    log.warning(f"blog_pipeline [{attempt}]: slug non trouvé dans la réponse rédiger")
-                budget.sync_tokens()
-                log.info(f"blog_pipeline [{attempt}]: étape 1 OK — tokens={budget.used_tokens}")
-                await notify(
-                    f"✍️ *Rédaction OK* — génération des images Gemini en cours…\n"
-                    f"_Sujet : {sujet[:80]}_"
-                )
+        # ── Étape 3 : qualité (informative seulement) ─────────────────────────
+        log.info("blog_pipeline: étape 3 — qualite.vérifier")
+        try:
+            budget.check()
 
-            except asyncio.TimeoutError:
-                log.error(f"blog_pipeline [{attempt}]: étape 1 TIMEOUT (200s)")
-                article_result = {"erreur": "timeout rédaction 200s"}
-            except PipelineBudgetError as e:
-                log.error(f"blog_pipeline [{attempt}]: BUDGET ÉPUISÉ: {e}")
-                await notify(
-                    f"⛔ *Pipeline blog — budget épuisé après {attempt} tentative(s)*\n\n"
-                    f"📝 _{sujet[:100]}_\n"
-                    f"_{e}_\n"
-                    f"_Durée : {budget.elapsed():.0f}s_"
-                )
-                return
-            except Exception as e:
-                log.error(f"blog_pipeline [{attempt}]: étape 1 ERREUR: {e}", exc_info=True)
-                article_result = {"erreur": str(e)[:200]}
+            # Utiliser le contenu réel depuis le cache (pas le message de confirmation)
+            from agents.framer import _article_cache
+            cached = _article_cache.get(actual_slug, {}) if actual_slug else {}
+            cached_article = cached.get("article", {})
+            titre = cached_article.get("Title", "") or _extract_titre(article_result.get("raw", ""), sujet)
 
-            if not etape1_ok:
-                erreur = article_result.get("erreur", "Erreur inconnue")
-                if attempt < MAX_ATTEMPTS:
-                    log.warning(f"blog_pipeline [{attempt}]: rédaction échouée — retry dans 5s")
-                    qa_feedback = f"Tentative précédente échouée ({erreur}). Simplifie l'approche et génère un article complet en français."
-                    await asyncio.sleep(5)
-                    continue
-                # Échec définitif — on a tout essayé
-                await notify(
-                    f"⛔ *Pipeline blog échoué après {MAX_ATTEMPTS} tentatives*\n\n"
-                    f"📝 _{sujet[:100]}_\n"
-                    f"Dernière erreur : _{erreur}_\n"
-                    f"_Durée : {budget.elapsed():.0f}s | Tokens : {budget.used_tokens}/{budget.max_tokens}_"
-                )
-                return
+            # Assembler un extrait du contenu réel de l'article
+            if cached_article:
+                parts = []
+                for field in ("Heading1-Text", "Heading2-Text", "Heading3-Text"):
+                    val = cached_article.get(field, "")
+                    if val:
+                        parts.append(val[:200])
+                contenu_sample = " ".join(parts)[:800] or f"Article sur : {sujet}"
+            else:
+                contenu_sample = f"Article sur : {sujet}"
 
-            # ── Étape 2 : images ──────────────────────────────────────────────
-            log.info(f"blog_pipeline [{attempt}]: étape 2 — framer.illustrer")
-            try:
-                budget.check()
-                ctx_illustrer: dict = {"sujet": sujet}
-                if actual_slug:
-                    ctx_illustrer["slug"] = actual_slug
-                raw2 = await asyncio.wait_for(
-                    dispatch("framer", "illustrer", ctx_illustrer),
-                    timeout=135,
-                )
-                images_result = {"raw": raw2}
-                images_ok = True
-                # Chercher un chiffre explicite ("3 image(s)", "uploaded 2", etc.)
-                import re as _re
-                _m = _re.search(r'\b([1-9][0-9]?)\s*image', raw2, flags=_re.IGNORECASE)
-                img_count = int(_m.group(1)) if _m else (0 if "❌" in raw2 or "erreur" in raw2.lower() else 1)
-                log.info(f"blog_pipeline [{attempt}]: étape 2 OK — img_count={img_count} (extrait du résultat)")
-            except asyncio.TimeoutError:
-                log.warning(f"blog_pipeline [{attempt}]: étape 2 TIMEOUT — continue sans images")
-                images_result = {"erreur": "timeout images 135s"}
-            except PipelineBudgetError as e:
-                await notify(f"⛔ *Pipeline arrêté — budget à l'étape images*\n_{e}_")
-                return
-            except Exception as e:
-                log.warning(f"blog_pipeline [{attempt}]: étape 2 ERREUR (continue): {e}")
-                images_result = {"erreur": str(e)[:200]}
+            from agents.qualite import agent as qualite_agent
+            qualite_result = await asyncio.wait_for(
+                qualite_agent.verifier_article(
+                    {
+                        "titre": titre,
+                        "contenu_sample": contenu_sample,
+                        "sujet": sujet,
+                        "img_count": img_count,
+                    },
+                    budget=budget.session,
+                ),
+                timeout=30,
+            )
+            budget.sync_tokens()
+            score = qualite_result.get("score", 0)
+            log.info(f"blog_pipeline: étape 3 OK — score={score}/10")
 
-            # ── Étape 3 : qualité ──────────────────────────────────────────────
-            log.info(f"blog_pipeline [{attempt}]: étape 3 — qualite.vérifier")
-            try:
-                budget.check()
-                raw1_text = article_result.get("raw", "")
-                titre = _extract_titre(raw1_text, sujet)
-                contenu_sample = raw1_text[:800] if raw1_text else f"Article sur : {sujet}"
+        except asyncio.TimeoutError:
+            qualite_result = {"score": 0, "ok": True, "raison": "Scoring timeout (30s) — article publié"}
+        except Exception as e:
+            log.error(f"blog_pipeline: étape 3 ERREUR: {e}", exc_info=True)
+            qualite_result = {"score": 0, "ok": True, "raison": f"Scoring indisponible"}
 
-                from agents.qualite import agent as qualite_agent
-                qualite_result = await asyncio.wait_for(
-                    qualite_agent.verifier_article(
-                        {
-                            "titre": titre,
-                            "contenu_sample": contenu_sample,
-                            "sujet": sujet,
-                            "img_count": img_count,
-                        },
-                        budget=budget.session,
-                    ),
-                    timeout=30,
-                )
-                budget.sync_tokens()
-                score = qualite_result.get("score", 0)
-                log.info(f"blog_pipeline [{attempt}]: étape 3 OK — score={score}/10")
-
-            except asyncio.TimeoutError:
-                qualite_result = {"score": 0, "ok": False, "raison": "Timeout scoring (30s)"}
-            except PipelineBudgetError as e:
-                qualite_result = {"score": 0, "ok": False, "raison": f"Budget: {e}"}
-            except Exception as e:
-                log.error(f"blog_pipeline [{attempt}]: étape 3 ERREUR: {e}", exc_info=True)
-                qualite_result = {"score": 0, "ok": False, "raison": f"Erreur: {e}"}
-
-            score_final = qualite_result.get("score", 0)
-            raison_qa   = qualite_result.get("raison", "")
-
-            # ── QA Gate ────────────────────────────────────────────────────────
-            if score_final >= 6:
-                # ✅ Succès — notifier JP et terminer
-                log.info(f"blog_pipeline [{attempt}]: QA PASS score={score_final}/10 → notification")
-                await self._notify_done(
-                    sujet=sujet,
-                    etape1_ok=etape1_ok,
-                    images_ok=images_ok,
-                    article_result=article_result,
-                    images_result=images_result,
-                    qualite_result=qualite_result,
-                    budget=budget,
-                    attempt=attempt,
-                )
-                return
-
-            # ❌ Score insuffisant — supprimer du CMS et préparer le retry
-            log.warning(f"blog_pipeline [{attempt}]: QA FAIL score={score_final}/10 — {raison_qa[:100]}")
-            raw1_text = article_result.get("raw", "")
-            slug_published = _extract_slug(raw1_text)
-            if slug_published:
-                try:
-                    from agents.framer import framer_list_items, framer_delete_item
-                    list_res = await framer_list_items()
-                    if list_res.get("ok"):
-                        for item in list_res.get("items", []):
-                            if item.get("slug") == slug_published:
-                                await framer_delete_item(item["id"])
-                                log.info(f"blog_pipeline [{attempt}]: article retiré du CMS ({slug_published})")
-                                break
-                except Exception as del_err:
-                    log.error(f"blog_pipeline [{attempt}]: erreur suppression CMS: {del_err}")
-
-            if attempt < MAX_ATTEMPTS:
-                # Construire un feedback précis pour guider la prochaine génération
-                qa_feedback = (
-                    f"L'article précédent a obtenu {score_final}/10. "
-                    f"Problème identifié : {raison_qa}. "
-                    f"Pour la prochaine tentative : génère un article substantiel avec au moins "
-                    f"5 sections développées, chaque section d'au moins 3 paragraphes, "
-                    f"en apportant des exemples concrets et une analyse stratégique réelle. "
-                    f"Ne répète pas le titre comme contenu."
-                )
-                log.info(f"blog_pipeline [{attempt}]: retry avec feedback QA dans 3s")
-                await asyncio.sleep(3)
-                continue
-
-        # ── Échec après MAX_ATTEMPTS — diagnostic complet à JP ─────────────────
-        log.error(f"blog_pipeline: ÉCHEC DÉFINITIF après {MAX_ATTEMPTS} tentatives — sujet={sujet[:60]!r}")
-        await notify(
-            f"⛔ *Pipeline blog — échec après {MAX_ATTEMPTS} tentatives autonomes*\n\n"
-            f"📝 _{sujet[:100]}_\n"
-            f"Dernier score QA : *{score_final}/10*\n"
-            f"Diagnostic : _{raison_qa[:300]}_\n\n"
-            f"💡 Suggestion : reformuler le sujet de façon plus spécifique.\n"
-            f"_Durée : {budget.elapsed():.0f}s | Tokens : {budget.used_tokens}/{budget.max_tokens}_"
+        # ── Notification finale ────────────────────────────────────────────────
+        # L'article est publié — on notifie JP dans tous les cas
+        log.info(f"blog_pipeline: pipeline terminé — notification JP")
+        await self._notify_done(
+            sujet=sujet,
+            etape1_ok=etape1_ok,
+            images_ok=images_ok,
+            article_result=article_result,
+            images_result=images_result,
+            qualite_result=qualite_result,
+            budget=budget,
+            attempt=1,
         )
 
     async def _notify_done(
