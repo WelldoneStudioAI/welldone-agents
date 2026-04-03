@@ -896,13 +896,27 @@ class FramerAgent(BaseAgent):
 
         log.info(f"framer.illustrer: génération Gemini pour slug={slug}")
 
-        # Générer toutes les images en parallèle (timeout 45s/image)
+        # Variations visuelles par position pour éviter la répétition
+        _IMG_ANGLES = [
+            "hero shot, wide angle, dramatic lighting",
+            "close-up detail, texture and craft, intimate",
+            "environmental portrait, person in context, candid",
+            "abstract concept, geometric, symbolic",
+            "overhead flat lay, organized workspace",
+            "architectural or urban context, exterior",
+            "data visualization metaphor, charts, growth",
+            "human connection, collaboration, hands",
+        ]
+
+        # Générer toutes les images en parallèle (timeout 60s/image)
         ts    = int(time.time())
         tasks = []
         for i, field in enumerate(IMAGE_FIELDS):
             alt_key = f"{field}:alt"
             ctx_img = article.get(alt_key) if article else None
-            ctx_img = ctx_img or visual_brief
+            if not ctx_img:
+                angle = _IMG_ANGLES[i % len(_IMG_ANGLES)]
+                ctx_img = f"{visual_brief} — {angle}"
             pid     = f"blog/{_make_slug(slug[:40])}-img{i+1}-{ts}.png"
             tasks.append(_generate_and_upload_image(ctx_img, pid))
 
