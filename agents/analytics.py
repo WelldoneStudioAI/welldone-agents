@@ -39,8 +39,8 @@ class AnalyticsAgent(BaseAgent):
         try:
             totals, sources_rows, pages_rows, organic, direct, start, end = self._ga4_summary(days)
             keywords, opps = self._gsc_keywords()
-            analyse  = self._analyse(totals, organic, direct, opps)
             events   = self._ga4_events(days)
+            analyse  = self._analyse(totals, organic, direct, opps, events)
             html     = self._build_html(totals, sources_rows, pages_rows, keywords, opps, analyse, start, end, days, events)
             self._send_email(html, start, end)
             log.info(f"analytics.rapport sent days={days}")
@@ -278,7 +278,7 @@ class AnalyticsAgent(BaseAgent):
 
         return keywords, opps
 
-    def _analyse(self, totals, organic, direct, opps) -> list[str]:
+    def _analyse(self, totals, organic, direct, opps, events=None) -> list[str]:
         sessions       = totals["sessions"]
         sessions_delta = totals["sessions_delta"]
         organic_pct    = organic / max(sessions, 1) * 100
@@ -322,6 +322,34 @@ class AnalyticsAgent(BaseAgent):
             lignes.append(f"🚀 <strong>{len(opps)} mots-clés en position 4-20</strong> pourraient passer en page 1.")
         else:
             lignes.append("→ Aucune opportunité SEO immédiate cette semaine.")
+
+        # ── Analyse conversions ───────────────────────────────────────────────
+        if events:
+            ev = dict(events)
+            form_start  = ev.get("form_start",  0)
+            form_submit = ev.get("form_submit",  0)
+            click_email = ev.get("click_email",  0)
+            click_phone = ev.get("click_phone",  0)
+
+            if form_submit > 0:
+                lignes.append(
+                    f"🎯 <strong>{form_submit} demande(s) de contact</strong> reçue(s) cette semaine "
+                    f"— <strong>ACTION REQUISE</strong> : vérifier ta boîte et répondre."
+                )
+            elif form_start > 0:
+                abandon_pct = (1 - form_submit / form_start) * 100 if form_start else 100
+                lignes.append(
+                    f"⚠️ <strong>{form_start} personnes</strong> ont commencé à remplir ton formulaire "
+                    f"mais <strong>0 ne l'ont pas terminé</strong> ({abandon_pct:.0f}% d'abandon). "
+                    f"Simplifier le formulaire = plus de leads."
+                )
+            else:
+                lignes.append("→ Aucun clic sur les CTA cette semaine.")
+
+            if click_email or click_phone:
+                lignes.append(
+                    f"📞 Contacts directs : {click_email} clic(s) email · {click_phone} clic(s) téléphone."
+                )
 
         return lignes
 
