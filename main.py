@@ -174,7 +174,7 @@ async def main():
             # Vars critiques
             _REQUIRED_VARS = [
                 "TELEGRAM_BOT_TOKEN", "ANTHROPIC_API_KEY",
-                "FRAMER_API_KEY", "TELEGRAM_ALLOWED_USER_ID",
+                "FRAMER_API_KEY",
             ]
             missing_vars = [v for v in _REQUIRED_VARS if not _hzos.environ.get(v)]
 
