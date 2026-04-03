@@ -74,12 +74,13 @@ def _is_allowed(update: Update) -> bool:
 
 
 async def _send(update: Update, text: str):
-    """Envoie un message en Markdown, en gérant les limites de taille Telegram (4096 chars)."""
-    if len(text) <= 4096:
-        await update.effective_message.reply_text(text, parse_mode="Markdown")
-        return
-    for i in range(0, len(text), 4000):
-        await update.effective_message.reply_text(text[i:i+4000], parse_mode="Markdown")
+    """Envoie en Markdown avec fallback plain text si parse error (underscore, backtick non fermé, etc.)."""
+    chunks = [text[i:i+4000] for i in range(0, len(text), 4000)] if len(text) > 4096 else [text]
+    for chunk in chunks:
+        try:
+            await update.effective_message.reply_text(chunk, parse_mode="Markdown")
+        except Exception:
+            await update.effective_message.reply_text(chunk)
 
 
 # Alias pour la lisibilité
