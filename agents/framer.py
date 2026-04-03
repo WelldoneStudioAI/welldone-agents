@@ -553,36 +553,36 @@ async def _get_portfolio_images(sector: str, max_images: int = 8) -> list[dict]:
 # Génération d'images Gemini × Cloudinary
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _generate_image_gemini(visual_context: str) -> bytes | None:
+async def _generate_image_gemini(article_section: str) -> bytes | None:
     """
-    Génère une image via Gemini Imagen 4 → retourne les bytes PNG.
-    Utilise l'esthétique Welldone Studio : minimaliste, tons neutres, lumière naturelle.
+    Génère une image via Gemini generate_content (gemini-3.1-flash-image-preview).
+    Passe le texte réel de l'article comme contexte → image directement liée au contenu.
     """
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY manquant dans Railway")
     from google import genai
-    from google.genai import types as gtypes
     client = genai.Client(api_key=GEMINI_API_KEY)
+
     prompt = (
-        "Authentic editorial photography, looks handcrafted by a human photographer. "
-        "Welldone Studio aesthetic: minimalist, warm neutral tones, natural window light, "
-        "premium materials, genuine candid moments, no stock photo feel. "
-        "Device screens (if present) show real creative work: brand identity, web design, photography portfolios. "
-        "No text overlays, no watermarks, no AI-looking artifacts. Commercial photography quality. "
-        f"{visual_context}"
+        f"Illustrate this blog article excerpt for Welldone Studio, a Montreal creative agency:\n\n"
+        f"\"{article_section[:600]}\"\n\n"
+        "Create an authentic editorial photograph that visually represents the concept above. "
+        "Style: minimalist, warm neutral tones, natural window light, genuine candid moment, "
+        "not a stock photo, not AI-looking. If screens are visible, show work related to the article topic. "
+        "No text overlays, no watermarks. Commercial photography quality. 16:9 aspect ratio."
     )
-    response = await asyncio.to_thread(
-        client.models.generate_images,
-        model="imagen-4.0-generate-001",
-        prompt=prompt,
-        config=gtypes.GenerateImagesConfig(
-            number_of_images=1,
-            aspect_ratio="16:9",
-        ),
-    )
-    if response.generated_images:
-        return response.generated_images[0].image.image_bytes
-    return None
+
+    def _call():
+        resp = client.models.generate_content(
+            model="gemini-3.1-flash-image-preview",
+            contents=[prompt],
+        )
+        for part in resp.parts:
+            if part.inline_data is not None:
+                return part.inline_data.data
+        return None
+
+    return await asyncio.to_thread(_call)
 
 
 def _upload_to_gcs(image_bytes: bytes, blob_name: str) -> str | None:
@@ -813,26 +813,27 @@ class FramerAgent(BaseAgent):
 
         try:
             from google import genai as _genai
-            from google.genai import types as _gtypes
             client = _genai.Client(api_key=GEMINI_API_KEY)
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    client.models.generate_images,
-                    model="imagen-4.0-generate-001",
-                    prompt="minimalist desk, natural light",
-                    config=_gtypes.GenerateImagesConfig(number_of_images=1, aspect_ratio="16:9"),
-                ),
-                timeout=30,
-            )
-            if response.generated_images:
-                nb = len(response.generated_images[0].image.image_bytes)
-                lines.append(f"🖼 Gemini Imagen 4: ✅ {nb} bytes générés")
+
+            def _test_img():
+                resp = client.models.generate_content(
+                    model="gemini-3.1-flash-image-preview",
+                    contents=["A minimalist Montreal studio desk with natural light, editorial photography style."],
+                )
+                for part in resp.parts:
+                    if part.inline_data is not None:
+                        return len(part.inline_data.data)
+                return 0
+
+            nb = await asyncio.wait_for(asyncio.to_thread(_test_img), timeout=30)
+            if nb > 0:
+                lines.append(f"🖼 Gemini image (generate_content): ✅ {nb} bytes générés")
             else:
-                lines.append("🖼 Gemini Imagen 4: ⚠️ réponse vide (0 images)")
+                lines.append("🖼 Gemini image: ⚠️ réponse vide")
         except asyncio.TimeoutError:
-            lines.append("🖼 Gemini Imagen 4: ⏱ Timeout 30s — API trop lente ou bloquée")
+            lines.append("🖼 Gemini image: ⏱ Timeout 30s")
         except Exception as e:
-            lines.append(f"🖼 Gemini Imagen 4: ❌ {type(e).__name__}: {e}")
+            lines.append(f"🖼 Gemini image: ❌ {type(e).__name__}: {e}")
 
         return "\n".join(lines)
 
@@ -901,27 +902,44 @@ class FramerAgent(BaseAgent):
 
         log.info(f"framer.illustrer: génération Gemini pour slug={slug}")
 
-        # Variations de cadrage — compositions neutres, le visual_brief donne le contexte thématique
-        _IMG_ANGLES = [
-            "wide hero shot, professional at desk with laptop open, natural window light from the side, editorial quality, authentic moment",
-            "close-up hands on laptop keyboard, screen softly visible, coffee cup beside, shallow depth of field, candid and real",
-            "over-the-shoulder view, person focused on their work on a large monitor, warm ambient studio light, genuine concentration",
-            "flat lay overhead, open laptop with notebook and pen beside, clean minimal desk surface, neutral tones, top-down editorial",
-            "person reviewing content on laptop screen, thoughtful expression, soft natural light, genuine and unposed, documentary style",
-            "side profile, professional absorbed in screen work, screen glow on face, dark neutral background, cinematic editorial",
-            "close-up of hands and keyboard with screen visible in background, bokeh effect, natural light, focused work session",
-            "two people in a brief authentic conversation, laptop between them on a minimal table, collaborative and candid moment",
+        # Mapping section d'article → champ image
+        # Chaque image est illustrée par le texte réel de la section correspondante
+        _SECTION_MAP = [
+            # (Hero-Image)   Titre + sous-titre → image d'accroche
+            ["Title", "Sous-Titre (gauche)"],
+            # (Image 2)      Section 1
+            ["Heading1-Titre", "Heading1-Text"],
+            # (Image 3)      Section 2
+            ["Heading2-Titre", "Heading2-Text"],
+            # (Image 4)      Section 3
+            ["Heading3-Titre", "Heading3-Text"],
+            # (Image 5)      Section 4
+            ["Heading4-Titre", "Heading4-Text"],
+            # (Image 6)      Section 5
+            ["Heading5-Titre", "Heading5-Text"],
+            # (Image 7)      Section bonus
+            ["Heading 3", "Body Text 3"],
+            # (Image 8)      Titre repris pour l'image de conclusion
+            ["Title", "Objectif Stratégique"],
         ]
+
+        def _section_text(fields: list[str]) -> str:
+            """Assemble le texte des champs article pour une image."""
+            parts = []
+            for f in fields:
+                val = (article or {}).get(f, "")
+                if val and len(str(val).strip()) > 5:
+                    parts.append(str(val).strip())
+            text = " — ".join(parts)
+            # Fallback si aucun champ trouvé
+            return text or visual_brief
 
         # Générer toutes les images en parallèle (timeout 60s/image)
         ts    = int(time.time())
         tasks = []
         for i, field in enumerate(IMAGE_FIELDS):
-            alt_key = f"{field}:alt"
-            ctx_img = article.get(alt_key) if article else None
-            if not ctx_img:
-                angle = _IMG_ANGLES[i % len(_IMG_ANGLES)]
-                ctx_img = f"{visual_brief} — {angle}"
+            section_fields = _SECTION_MAP[i] if i < len(_SECTION_MAP) else ["Title"]
+            ctx_img = _section_text(section_fields)
             pid     = f"blog/{_make_slug(slug[:40])}-img{i+1}-{ts}.png"
             tasks.append(_generate_and_upload_image(ctx_img, pid))
 
