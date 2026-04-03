@@ -38,7 +38,8 @@ _ROUTING_RULES: list[tuple[list[str], str, str]] = [
     (["framer", "cms", "page web", "site"],                         "framer",    "liste"),
     (["email", "infolettre", "newsletter", "courriel"],             "email",     "trier"),
     (["veille", "tendance", "marché"],                              "veille",    "run"),
-    (["audit", "analyse", "stratégique"],                           "analytics", "rapport"),
+    (["audit", "analyse", "stratégique"],                           "analytics",       "rapport"),
+    (["layout", "guardian", "mise en page", "responsive", "overflow", "alignment", "design qa"], "layout_guardian", "inspecter"),
 ]
 
 def _route_issue(title: str, description: str) -> tuple[str, str] | None:
@@ -164,9 +165,16 @@ class CEOAgent(BaseAgent):
                     agent_dispatch(agent_name, command, {"sujet": sujet, "issue_id": issue_id}),
                     timeout=360,  # 6 min max par tâche
                 )
-                await _update_issue_status(issue_id, "done")
-                results.append(f"✅ {title[:50]}")
-                log.info(f"ceo.dispatch: issue {issue_id} terminée")
+                # Vérifier si le résultat indique un echec réel
+                result_str = str(result or "")
+                if result_str.startswith("❌") or result_str.startswith("Erreur"):
+                    await _update_issue_status(issue_id, "cancelled")
+                    results.append(f"❌ {title[:50]} — {result_str[:80]}")
+                    log.warning(f"ceo.dispatch: issue {issue_id} échouée — {result_str[:80]}")
+                else:
+                    await _update_issue_status(issue_id, "done")
+                    results.append(f"✅ {title[:50]}")
+                    log.info(f"ceo.dispatch: issue {issue_id} terminée")
 
             except asyncio.TimeoutError:
                 log.error(f"ceo.dispatch: timeout issue {issue_id}")

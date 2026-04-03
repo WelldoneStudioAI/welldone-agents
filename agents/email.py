@@ -706,39 +706,45 @@ class EmailAgent(BaseAgent):
 
         return "\n".join(lines)
 
-    # ── LIRE — liste brute ────────────────────────────────────────────────────
+    # ── LIRE — liste brute (tous comptes) ────────────────────────────────────
 
     async def lire(self, ctx: dict | None = None) -> str:
         ctx   = ctx or {}
         limit = int(ctx.get("limit", 15))
 
         def _run():
-            M = _connect()
-            M.select("INBOX")
-            typ, data = M.search(None, "ALL")
-            all_ids = data[0].split() if data[0] else []
-            target  = list(reversed(all_ids[-limit:]))
-
-            if not target:
-                M.logout()
-                return []
-
-            results = []
-            for uid in target:
-                uid_s = _uid_str(uid)
-                try:
-                    typ2, msg_data = M.fetch(uid_s, "(RFC822.HEADER)")
-                    msg = email.message_from_bytes(msg_data[0][1])
-                    results.append({
-                        "uid":     uid_s,
-                        "from":    _decode(msg.get("From", "?")),
-                        "subject": _decode(msg.get("Subject", "(sans objet)")),
-                        "date":    _parse_date(msg.get("Date", "")),
-                    })
-                except Exception:
+            all_items = []
+            for host, port, user, password, label in _ALL_ACCOUNTS:
+                M = _connect_account(host, port, user, password)
+                if M is None:
                     continue
-            M.logout()
-            return results
+                try:
+                    M.select("INBOX")
+                    typ, data = M.search(None, "ALL")
+                    all_ids = data[0].split() if data[0] else []
+                    target  = list(reversed(all_ids[-limit:]))
+                    for uid in target:
+                        uid_s = _uid_str(uid)
+                        try:
+                            typ2, msg_data = M.fetch(uid_s, "(RFC822.HEADER)")
+                            msg = email.message_from_bytes(msg_data[0][1])
+                            all_items.append({
+                                "uid":     uid_s,
+                                "account": label,
+                                "from":    _decode(msg.get("From", "?")),
+                                "subject": _decode(msg.get("Subject", "(sans objet)")),
+                                "date":    _parse_date(msg.get("Date", "")),
+                            })
+                        except Exception:
+                            continue
+                except Exception as e:
+                    log.warning(f"email.lire {label}: {e}")
+                finally:
+                    try:
+                        M.logout()
+                    except Exception:
+                        pass
+            return all_items
 
         try:
             items = await asyncio.get_event_loop().run_in_executor(None, _run)
@@ -748,9 +754,9 @@ class EmailAgent(BaseAgent):
         if not items:
             return "📭 Boîte vide."
 
-        lines = [f"📬 *{len(items)} derniers emails* (boîte WHC)\n"]
+        lines = [f"📬 *{len(items)} derniers emails (tous comptes)*\n"]
         for it in items:
-            lines.append(f"*[{it['uid']}]* {it['date']}\nDe: {it['from']}\nSujet: {it['subject']}\n")
+            lines.append(f"*[{it['uid']}]* [{it['account']}] {it['date']}\nDe: {it['from']}\nSujet: {it['subject']}\n")
         lines.append("_`/email résumer [uid]` pour lire · `/email trier` pour le triage IA_")
         return "\n".join(lines)
 

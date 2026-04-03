@@ -14,7 +14,6 @@ from config import (
 )
 
 log = logging.getLogger(__name__)
-TODAY   = datetime.today().strftime("%d %B %Y")
 
 
 class VeilleAgent(BaseAgent):
@@ -28,6 +27,7 @@ class VeilleAgent(BaseAgent):
 
     async def run(self, context: dict | None = None) -> str:
         """Pipeline complet de veille."""
+        TODAY = datetime.today().strftime("%d %B %Y")
         try:
             log.info("veille.run start")
             sources  = self._get_sources()
@@ -48,11 +48,14 @@ class VeilleAgent(BaseAgent):
             self._send_email(idees, notion_url)
             log.info("veille.run done")
 
-            notion_line = "📋 Page Notion créée\n" if notion_url else ""
+            # Compter les idées réellement générées (lignes commençant par un chiffre)
+            import re as _re
+            idees_count = len(_re.findall(r'^\s*\d+[\.\)]', idees, flags=_re.MULTILINE))
+            notion_line = "📋 Page Notion créée\n" if notion_url else "⚠️ Notion skipped\n"
             return (
                 f"✅ Veille {TODAY} complète !\n"
-                f"📡 {len(sources)} sources · {len(articles)} articles\n"
-                f"💡 10 idées générées\n"
+                f"📡 {len(sources)} sources · {len(articles)} articles récupérés\n"
+                f"💡 {idees_count} idées générées\n"
                 f"{notion_line}"
                 f"📧 Email envoyé à {GMAIL_RECIPIENT}"
             )
