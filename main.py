@@ -155,21 +155,31 @@ async def main():
                     "timestamp": _time.time()}
 
         # ── Webhook formulaire site web ────────────────────────────────────────
-        # Framer (ou tout autre CMS) peut POST ici dès qu'un visiteur soumet
-        # le formulaire de contact → notification Telegram immédiate, 0 délai.
-        # Headers requis: Authorization: Bearer {FRAMER_FORM_SECRET}
-        # Body JSON: {name, email, message, phone?, source?}
-        class _FormPayload(BaseModel):
-            name:    str  = ""
-            email:   str  = ""
-            message: str  = ""
-            phone:   str  = ""
-            source:  str  = "site"
+        # Framer poste ici dès qu'un visiteur soumet le formulaire de contact.
+        # Accepte JSON ET application/x-www-form-urlencoded (format Framer natif).
+        # Notification Telegram immédiate — 0 délai, 0 email.
+        # Variable Railway optionnelle: FRAMER_FORM_SECRET pour sécuriser.
+        from fastapi import Request as _Request
 
         _FORM_SECRET = os.environ.get("FRAMER_FORM_SECRET", "")
 
+        async def _send_lead_notification(data: dict) -> None:
+            from core.telegram_notifier import notify
+            name    = data.get("name") or data.get("Name") or data.get("prénom") or "Inconnu"
+            email   = data.get("email") or data.get("Email") or data.get("courriel") or ""
+            phone   = data.get("phone") or data.get("Phone") or data.get("téléphone") or ""
+            message = data.get("message") or data.get("Message") or data.get("description") or ""
+            source  = data.get("source") or data.get("page") or "awelldone.studio"
+            lines = ["🔥 *NOUVEAU LEAD — Formulaire site*", f"👤 *{name}*"]
+            if email:   lines.append(f"📧 {email}")
+            if phone:   lines.append(f"📞 {phone}")
+            if message: lines.append(f"\n💬 _{message[:300]}_")
+            lines.append(f"\n🌐 {source}")
+            await notify("\n".join(lines))
+            log.info(f"webhook/form: lead reçu — {name} <{email}>")
+
         @fastapi_app.post("/webhook/form")
-        async def _form_webhook(payload: _FormPayload,
+        async def _form_webhook(request: _Request,
                                 authorization: str = Header(default="")):
             # Vérification token si configuré
             if _FORM_SECRET:
@@ -177,21 +187,15 @@ async def main():
                 if token != _FORM_SECRET:
                     raise HTTPException(status_code=401, detail="Invalid token")
 
-            from core.telegram_notifier import notify
-            lines = [
-                "🔥 *NOUVEAU LEAD — Formulaire site*",
-                f"👤 *{payload.name or 'Inconnu'}*",
-            ]
-            if payload.email:
-                lines.append(f"📧 {payload.email}")
-            if payload.phone:
-                lines.append(f"📞 {payload.phone}")
-            if payload.message:
-                lines.append(f"\n💬 _{payload.message[:300]}_")
-            if payload.source:
-                lines.append(f"\n🌐 Source: {payload.source}")
-            await notify("\n".join(lines))
-            log.info(f"webhook/form: lead reçu de {payload.email} ({payload.source})")
+            # Accepter JSON ou form-encoded (Framer envoie les deux selon la config)
+            content_type = request.headers.get("content-type", "")
+            if "application/json" in content_type:
+                data = await request.json()
+            else:
+                form = await request.form()
+                data = dict(form)
+
+            await _send_lead_notification(data)
             return {"status": "ok", "notified": True}
 
         @fastapi_app.get("/paperclip/agents")
