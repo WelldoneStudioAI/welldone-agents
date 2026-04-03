@@ -812,17 +812,22 @@ class FramerAgent(BaseAgent):
             from google import genai as _genai
             from google.genai import types as _gtypes
             client = _genai.Client(api_key=GEMINI_API_KEY)
-            response = await asyncio.to_thread(
-                client.models.generate_images,
-                model="imagen-4.0-generate-001",
-                prompt="minimalist desk, natural light",
-                config=_gtypes.GenerateImagesConfig(number_of_images=1, aspect_ratio="16:9"),
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    client.models.generate_images,
+                    model="imagen-4.0-generate-001",
+                    prompt="minimalist desk, natural light",
+                    config=_gtypes.GenerateImagesConfig(number_of_images=1, aspect_ratio="16:9"),
+                ),
+                timeout=30,
             )
             if response.generated_images:
                 nb = len(response.generated_images[0].image.image_bytes)
                 lines.append(f"🖼 Gemini Imagen 4: ✅ {nb} bytes générés")
             else:
                 lines.append("🖼 Gemini Imagen 4: ⚠️ réponse vide (0 images)")
+        except asyncio.TimeoutError:
+            lines.append("🖼 Gemini Imagen 4: ⏱ Timeout 30s — API trop lente ou bloquée")
         except Exception as e:
             lines.append(f"🖼 Gemini Imagen 4: ❌ {type(e).__name__}: {e}")
 
