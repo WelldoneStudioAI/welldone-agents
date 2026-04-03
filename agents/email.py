@@ -28,6 +28,7 @@ from email.header import decode_header as _decode_header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime
+from pathlib import Path
 
 from agents._base import BaseAgent
 
@@ -41,13 +42,86 @@ SMTP_PORT = int(os.environ.get("WHC_SMTP_PORT", "465"))
 WHC_EMAIL = os.environ.get("WHC_EMAIL", "jptanguay@awelldone.com")
 WHC_PASS  = os.environ.get("WHC_PASSWORD", "")
 
-# ── Mémoire expéditeurs (en mémoire — persiste jusqu'au redémarrage) ──────────
-# Structure : { "email@domain.com": { "type": "CLIENT_ACTIF", "bias": 18, "notes": "" } }
-_SENDER_MEMORY: dict[str, dict] = {}
+# ── Hostinger (boîte principale jptanguay@awelldone.com) ─────────────────────
+HST_IMAP_HOST = os.environ.get("HST_IMAP_HOST", "imap.hostinger.com")
+HST_IMAP_PORT = int(os.environ.get("HST_IMAP_PORT", "993"))
+HST_EMAIL     = os.environ.get("HST_EMAIL", "jptanguay@awelldone.com")
+HST_PASS      = os.environ.get("HST_PASSWORD", "")
 
-# ── Filtres locaux ─────────────────────────────────────────────────────────────
+# Toutes les boîtes à surveiller (host, port, user, pass, label)
+_ALL_ACCOUNTS = [
+    (IMAP_HOST, IMAP_PORT, WHC_EMAIL, WHC_PASS,  "WHC"),
+    (HST_IMAP_HOST, HST_IMAP_PORT, HST_EMAIL, HST_PASS, "Hostinger"),
+]
+
+# ── Persistance filtres sur disque ────────────────────────────────────────────
+_FILTERS_FILE = Path.home() / ".welldone" / "email_filters.json"
+_SENDER_MEMORY_FILE = Path.home() / ".welldone" / "email_sender_memory.json"
+
+def _load_filters() -> list[dict]:
+    try:
+        _FILTERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if _FILTERS_FILE.exists():
+            return json.loads(_FILTERS_FILE.read_text())
+    except Exception as e:
+        log.warning(f"email: erreur chargement filtres: {e}")
+    return []
+
+def _save_filters(filters: list[dict]) -> None:
+    try:
+        _FILTERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _FILTERS_FILE.write_text(json.dumps(filters, ensure_ascii=False, indent=2))
+    except Exception as e:
+        log.warning(f"email: erreur sauvegarde filtres: {e}")
+
+def _load_sender_memory() -> dict:
+    try:
+        if _SENDER_MEMORY_FILE.exists():
+            return json.loads(_SENDER_MEMORY_FILE.read_text())
+    except Exception as e:
+        log.warning(f"email: erreur chargement mémoire expéditeurs: {e}")
+    return {}
+
+def _save_sender_memory(memory: dict) -> None:
+    try:
+        _SENDER_MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _SENDER_MEMORY_FILE.write_text(json.dumps(memory, ensure_ascii=False, indent=2))
+    except Exception as e:
+        log.warning(f"email: erreur sauvegarde mémoire expéditeurs: {e}")
+
+# ── Mémoire expéditeurs (persistée sur disque) ────────────────────────────────
+# Structure : { "email@domain.com": { "type": "CLIENT_ACTIF", "bias": 18, "notes": "" } }
+_SENDER_MEMORY: dict[str, dict] = _load_sender_memory()
+
+# ── Filtres locaux (persistés sur disque) ─────────────────────────────────────
 # Structure : [ { "id": "...", "name": "...", "conditions": [...], "actions": [...] } ]
-_FILTERS: list[dict] = []
+_FILTERS: list[dict] = _load_filters()
+log.info(f"email: {len(_FILTERS)} filtre(s) chargé(s) depuis {_FILTERS_FILE}")
+
+# ── Whitelist contacts connus (persistée sur disque) ──────────────────────────
+_WHITELIST_FILE = Path.home() / ".welldone" / "email_whitelist.json"
+
+def _load_whitelist() -> set[str]:
+    try:
+        if _WHITELIST_FILE.exists():
+            data = json.loads(_WHITELIST_FILE.read_text())
+            return set(data.get("emails", []))
+    except Exception as e:
+        log.warning(f"email: erreur chargement whitelist: {e}")
+    return set()
+
+def _save_whitelist(emails: set[str]) -> None:
+    try:
+        _WHITELIST_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _WHITELIST_FILE.write_text(json.dumps(
+            {"emails": sorted(emails), "count": len(emails)},
+            ensure_ascii=False, indent=2
+        ))
+    except Exception as e:
+        log.warning(f"email: erreur sauvegarde whitelist: {e}")
+
+_KNOWN_CONTACTS: set[str] = _load_whitelist()
+log.info(f"email: {len(_KNOWN_CONTACTS)} contacts connus chargés")
 
 # ── Catégories & priorités ────────────────────────────────────────────────────
 CATEGORIES = [
@@ -180,6 +254,81 @@ def _connect() -> imaplib.IMAP4_SSL:
     M = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT, ssl_context=ctx)
     M.login(WHC_EMAIL, WHC_PASS)
     return M
+
+
+def _connect_account(host: str, port: int, user: str, password: str) -> imaplib.IMAP4_SSL | None:
+    """Connexion IMAP générique — retourne None si échec (boîte non configurée)."""
+    if not password:
+        return None
+    try:
+        ctx = ssl.create_default_context()
+        M = imaplib.IMAP4_SSL(host, port, ssl_context=ctx)
+        M.login(user, password)
+        return M
+    except Exception as e:
+        log.warning(f"email: impossible de se connecter à {host} ({user}): {e}")
+        return None
+
+
+def _fetch_inbox_emails(host: str, port: int, user: str, password: str,
+                        label: str, limit: int, unseen_only: bool) -> list[dict]:
+    """Récupère les emails d'un compte IMAP et les retourne avec le label du compte."""
+    M = _connect_account(host, port, user, password)
+    if M is None:
+        return []
+    try:
+        M.select("INBOX")
+        if unseen_only:
+            typ, data = M.search(None, "UNSEEN")
+        else:
+            typ, data = M.search(None, "ALL")
+        all_ids = data[0].split() if data[0] else []
+        target  = all_ids[-limit:]
+        results = []
+        for uid in reversed(target):
+            uid_s = _uid_str(uid)
+            try:
+                typ2, msg_data = M.fetch(uid_s, "(RFC822)")
+                if not msg_data or not msg_data[0]:
+                    continue
+                raw = msg_data[0][1]
+                msg = email.message_from_bytes(raw)
+                from_raw  = _decode(msg.get("From", ""))
+                subject   = _decode(msg.get("Subject", "(sans objet)"))
+                date_str  = _parse_date(msg.get("Date", ""))
+                headers_raw = raw.decode("utf-8", errors="replace")[:2000]
+                from_match = re.search(r"<([^>]+)>", from_raw)
+                from_email = from_match.group(1).lower() if from_match else from_raw.lower()
+                is_bulk = (
+                    _is_bulk_by_headers(headers_raw)
+                    or _is_bulk_by_sender(from_raw)
+                    or _is_bulk_by_subject(subject)
+                )
+                snippet     = _get_body_snippet(msg, 500) if not is_bulk else ""
+                attachments = _get_attachments(msg)
+                results.append({
+                    "uid":              uid_s,
+                    "account":          label,
+                    "from":             from_raw,
+                    "from_email":       from_email,
+                    "subject":          subject,
+                    "date":             date_str,
+                    "snippet":          snippet,
+                    "has_attachment":   bool(attachments),
+                    "attachment_names": attachments,
+                    "pre_filtered":     is_bulk,
+                })
+            except Exception as e:
+                log.warning(f"Erreur fetch UID {uid_s} ({label}): {e}")
+        return results
+    except Exception as e:
+        log.warning(f"email: erreur lecture INBOX {label}: {e}")
+        return []
+    finally:
+        try:
+            M.logout()
+        except Exception:
+            pass
 
 
 def _parse_date(date_str: str) -> str:
@@ -332,23 +481,61 @@ def _gpt_draft(to: str, instructions: str) -> str:
 
 # ── Agent ──────────────────────────────────────────────────────────────────────
 
+_ARCHIVES_FOLDER = "INBOX.Archives"
+
+# Mots français courants pour détecter les emails en français direct
+_FR_WORDS = {"bonjour","bonsoir","salut","merci","svp","s'il","voici","votre","votre","nous","vous",
+             "est","sont","pour","avec","dans","mais","qui","que","une","les","des","plus","bien",
+             "comme","aussi","tout","cette","votre","notre","avoir","faire","être","ici","donc"}
+
+
+def _is_direct_french(msg) -> bool:
+    """Retourne True si l'email semble être un message direct en français (pas bulk)."""
+    # Rejeter si bulk headers présents
+    for h in BULK_HEADERS:
+        if msg.get(h):
+            return False
+    # Rejeter si expéditeur bulk évident
+    from_raw = _decode(msg.get("From", "")).lower()
+    if _is_bulk_by_sender(from_raw):
+        return False
+    # Détecter le français dans le corps
+    body = _get_body_snippet(msg, 500).lower()
+    body_words = set(re.findall(r'\b[a-zàâéèêëîïôùûüç]{3,}\b', body))
+    fr_match = len(body_words & _FR_WORDS)
+    return fr_match >= 3
+
+
 class EmailAgent(BaseAgent):
     name        = "email"
-    description = "Boîte WHC avec triage IA — filtre le bruit, priorise, propose des actions"
+    description = "Boîte WHC (Courriels) avec triage auto horaire — whitelist + français direct → INBOX, reste → Archives"
+
+    schedules = [
+        {
+            "id":     "email_auto_trier",
+            "cron":   "0 * * * *",   # chaque heure
+            "command": "auto_trier",
+            "context": {},
+            "label":  "Triage email horaire",
+        }
+    ]
 
     @property
     def commands(self):
         return {
-            "trier":             self.trier,
-            "lire":              self.lire,
-            "chercher":          self.chercher,
-            "résumer":           self.resumer,
-            "rédiger":           self.rediger,
-            "envoyer":           self.envoyer,
-            "filtres":           self.mes_filtres,
-            "créer_filtre":      self.creer_filtre,
-            "appliquer_filtres": self.appliquer_filtres,
-            "dossiers":          self.dossiers,
+            "trier":                self.trier,
+            "lire":                 self.lire,
+            "chercher":             self.chercher,
+            "résumer":              self.resumer,
+            "rédiger":              self.rediger,
+            "envoyer":              self.envoyer,
+            "filtres":              self.mes_filtres,
+            "créer_filtre":         self.creer_filtre,
+            "appliquer_filtres":    self.appliquer_filtres,
+            "dossiers":             self.dossiers,
+            "construire_whitelist": self.construire_whitelist,
+            "trier_boite":          self.trier_boite,
+            "auto_trier":           self.auto_trier,
         }
 
     # ── TRIER — commande principale ───────────────────────────────────────────
@@ -364,67 +551,12 @@ class EmailAgent(BaseAgent):
         unseen_only = ctx.get("unseen_only", False)
 
         def _fetch_emails():
-            M = _connect()
-            M.select("INBOX")
-
-            if unseen_only:
-                typ, data = M.search(None, "UNSEEN")
-            else:
-                typ, data = M.search(None, "ALL")
-
-            all_ids = data[0].split() if data[0] else []
-            target  = all_ids[-limit:]  # plus récents
-
-            if not target:
-                M.logout()
-                return []
-
-            emails_raw = []
-            for uid in reversed(target):  # récent en premier
-                uid_s = _uid_str(uid)
-                try:
-                    # Headers + corps en un seul fetch
-                    typ2, msg_data = M.fetch(uid_s, "(RFC822)")
-                    if not msg_data or not msg_data[0]:
-                        continue
-                    raw = msg_data[0][1]
-                    msg = email.message_from_bytes(raw)
-
-                    from_raw   = _decode(msg.get("From", ""))
-                    subject    = _decode(msg.get("Subject", "(sans objet)"))
-                    date_str   = _parse_date(msg.get("Date", ""))
-                    headers_raw = raw.decode("utf-8", errors="replace")[:2000]
-
-                    # Extraction adresse email seule
-                    from_match = re.search(r"<([^>]+)>", from_raw)
-                    from_email = from_match.group(1).lower() if from_match else from_raw.lower()
-
-                    is_bulk = (
-                        _is_bulk_by_headers(headers_raw)
-                        or _is_bulk_by_sender(from_raw)
-                        or _is_bulk_by_subject(subject)
-                    )
-
-                    snippet = _get_body_snippet(msg, 500) if not is_bulk else ""
-                    attachments = _get_attachments(msg)
-
-                    emails_raw.append({
-                        "uid":           uid_s,
-                        "from":          from_raw,
-                        "from_email":    from_email,
-                        "subject":       subject,
-                        "date":          date_str,
-                        "snippet":       snippet,
-                        "has_attachment": bool(attachments),
-                        "attachment_names": attachments,
-                        "pre_filtered":  is_bulk,  # déjà exclu par heuristiques
-                    })
-                except Exception as e:
-                    log.warning(f"Erreur fetch UID {uid_s}: {e}")
-                    continue
-
-            M.logout()
-            return emails_raw
+            all_emails = []
+            for host, port, user, password, label in _ALL_ACCOUNTS:
+                emails = _fetch_inbox_emails(host, port, user, password, label, limit, unseen_only)
+                all_emails.extend(emails)
+            # Trier par date décroissante (best effort — date est une string formatée)
+            return all_emails
 
         try:
             all_emails = await asyncio.get_event_loop().run_in_executor(None, _fetch_emails)
@@ -819,6 +951,150 @@ class EmailAgent(BaseAgent):
         lines.append("\n_Tu peux créer des filtres pour trier automatiquement dans ces dossiers._")
         return "\n".join(lines)
 
+    # ── WHITELIST + TRI RAPIDE ────────────────────────────────────────────────
+
+    async def construire_whitelist(self, ctx: dict | None = None) -> str:
+        """
+        Scanne le dossier Sent → extrait tous les destinataires → whitelist persistée.
+        À lancer une fois. Met à jour la liste à chaque appel.
+        """
+        global _KNOWN_CONTACTS
+
+        def _scan_sent():
+            M = _connect()
+            contacts = set()
+            for folder in ["INBOX.Sent", "Sent", "Sent Messages", "INBOX.Sent Messages"]:
+                try:
+                    typ, _ = M.select(folder, readonly=True)
+                    if typ != "OK":
+                        continue
+                    typ2, data = M.search(None, "ALL")
+                    ids = data[0].split() if data[0] else []
+                    # Traiter par lots de 100
+                    for i in range(0, len(ids), 100):
+                        batch = ids[i:i+100]
+                        id_list = ",".join(i.decode() for i in batch)
+                        try:
+                            typ3, msgs = M.fetch(id_list, "(RFC822.HEADER)")
+                            for item in msgs:
+                                if not isinstance(item, tuple):
+                                    continue
+                                msg = email.message_from_bytes(item[1])
+                                for header in ["To", "Cc"]:
+                                    raw = msg.get(header, "")
+                                    if not raw:
+                                        continue
+                                    for addr in raw.split(","):
+                                        m = re.search(r"<([^>]+)>", addr)
+                                        e = m.group(1).lower() if m else addr.strip().lower()
+                                        if "@" in e and len(e) < 100:
+                                            contacts.add(e)
+                        except Exception:
+                            continue
+                    M.close()
+                    break
+                except Exception:
+                    continue
+            M.logout()
+            return contacts
+
+        try:
+            contacts = await asyncio.get_event_loop().run_in_executor(None, _scan_sent)
+            _KNOWN_CONTACTS = contacts
+            _save_whitelist(contacts)
+            log.info(f"email: whitelist construite — {len(contacts)} contacts")
+            return (
+                f"✅ *Whitelist construite — {len(contacts)} contacts connus*\n"
+                f"Sauvegardée dans `{_WHITELIST_FILE}`\n\n"
+                f"Lance `trier_boite` pour trier tes 5500+ emails."
+            )
+        except Exception as e:
+            log.error(f"email.construire_whitelist: {e}")
+            return f"❌ Erreur construction whitelist: {e}"
+
+    async def trier_boite(self, ctx: dict | None = None) -> str:
+        """
+        Tri en masse de l'INBOX :
+        - Expéditeur dans la whitelist → reste dans Courriels (INBOX)
+        - Expéditeur inconnu → déplacé dans Archives (INBOX.Archives)
+        Traite tous les emails, par lots de 200, via UID MOVE.
+        """
+        global _KNOWN_CONTACTS
+        ctx = ctx or {}
+
+        if not _KNOWN_CONTACTS:
+            _KNOWN_CONTACTS = _load_whitelist()
+        if not _KNOWN_CONTACTS:
+            return "⚠️ Whitelist vide. Lance d'abord `construire_whitelist`."
+
+        def _run_sort():
+            M = _connect()
+            M.select("INBOX")
+            typ, data = M.uid("search", None, "ALL")
+            all_uids = data[0].split() if data[0] else []
+
+            moved = 0
+            kept  = 0
+            errors = 0
+            to_move = []
+
+            for i in range(0, len(all_uids), 200):
+                batch = all_uids[i:i+200]
+                uid_list = b",".join(batch).decode()
+                try:
+                    typ2, msgs = M.uid("fetch", uid_list, "(RFC822.HEADER)")
+                    j = 0
+                    for item in msgs:
+                        if not isinstance(item, tuple):
+                            continue
+                        uid_b = batch[j] if j < len(batch) else None
+                        j += 1
+                        if uid_b is None:
+                            continue
+                        uid_s = uid_b.decode()
+                        try:
+                            msg = email.message_from_bytes(item[1])
+                            from_raw = _decode(msg.get("From", ""))
+                            m = re.search(r"<([^>]+)>", from_raw)
+                            sender = m.group(1).lower() if m else from_raw.strip().lower()
+
+                            if sender in _KNOWN_CONTACTS:
+                                kept += 1
+                            else:
+                                to_move.append(uid_s)
+                                moved += 1
+                        except Exception:
+                            errors += 1
+                except Exception:
+                    errors += 1
+                    continue
+
+            # Déplacer par lots via UID MOVE (atomique)
+            for i in range(0, len(to_move), 500):
+                batch_move = to_move[i:i+500]
+                uid_set = ",".join(batch_move)
+                try:
+                    M.uid("MOVE", uid_set, _ARCHIVES_FOLDER)
+                except Exception as e:
+                    log.error(f"email.trier_boite MOVE error: {e}")
+
+            M.close()
+            M.logout()
+            return moved, kept, errors
+
+        try:
+            moved, kept, errors = await asyncio.get_event_loop().run_in_executor(None, _run_sort)
+            return (
+                f"✅ *Tri terminé*\n\n"
+                f"📥 Gardés dans Courriels : *{kept}* (contacts whitelist)\n"
+                f"📁 Déplacés vers Archives : *{moved}*\n"
+                f"⚠️ Erreurs ignorées : {errors}\n\n"
+                f"_Courriels ne contient que des gens avec qui tu as déjà échangé._"
+            )
+        except Exception as e:
+            log.error(f"email.trier_boite: {e}")
+            return f"❌ Erreur tri boite: {e}"
+
     # ── FILTRES — gestion ─────────────────────────────────────────────────────
 
     async def mes_filtres(self, ctx: dict | None = None) -> str:
@@ -898,6 +1174,7 @@ class EmailAgent(BaseAgent):
         import uuid
         rule["id"] = str(uuid.uuid4())[:8]
         _FILTERS.append(rule)
+        _save_filters(_FILTERS)  # Persister immédiatement
 
         # Si une action move_to est demandée, créer le dossier IMAP si nécessaire
         for action in rule.get("actions", []):
@@ -992,8 +1269,7 @@ class EmailAgent(BaseAgent):
                                         M.store(uid_s, "+FLAGS", "\\Deleted")
                                     elif atype == "move_to" and target_folder:
                                         dest = f"INBOX.{target_folder}"
-                                        M.copy(uid_s, dest)
-                                        M.store(uid_s, "+FLAGS", "\\Deleted")
+                                        M.uid("MOVE", uid_s, dest)
                                 except Exception:
                                     pass
                             applied_count += 1
@@ -1019,6 +1295,95 @@ class EmailAgent(BaseAgent):
             f"✅ *{count} emails traités* par {len(_FILTERS)} filtre(s)\n\n"
             f"{log_str}{more}"
         )
+
+
+    # ── AUTO TRIER — triage horaire automatique ───────────────────────────────
+
+    async def auto_trier(self, ctx: dict | None = None) -> str:
+        """
+        Triage automatique horaire :
+        - Scanne les emails UNSEEN dans INBOX
+        - Whitelist contact → garde dans Courriels
+        - Email direct en français (pas bulk) → garde dans Courriels
+        - Tout le reste → déplace vers Archives (INBOX.Archives)
+        Notifie via Telegram uniquement si des emails importants arrivent.
+        """
+        global _KNOWN_CONTACTS
+        if not _KNOWN_CONTACTS:
+            _KNOWN_CONTACTS = _load_whitelist()
+
+        def _run():
+            M = _connect()
+            M.select("INBOX")
+
+            # Chercher tous les emails non lus
+            typ, data = M.uid("search", None, "UNSEEN")
+            unseen_uids = data[0].split() if data[0] else []
+
+            if not unseen_uids:
+                M.logout()
+                return [], [], 0
+
+            kept_important = []   # (uid, from, subject) à notifier
+            to_archive     = []   # uids à déplacer
+
+            for uid_b in unseen_uids:
+                uid_s = uid_b.decode()
+                try:
+                    typ2, msg_data = M.uid("fetch", uid_s, "(RFC822)")
+                    if not msg_data or not isinstance(msg_data[0], tuple):
+                        continue
+                    msg = email.message_from_bytes(msg_data[0][1])
+
+                    from_raw = _decode(msg.get("From", ""))
+                    subject  = _decode(msg.get("Subject", "(sans sujet)"))
+                    m = re.search(r"<([^>]+)>", from_raw)
+                    sender = m.group(1).lower() if m else from_raw.strip().lower()
+
+                    if sender in _KNOWN_CONTACTS:
+                        kept_important.append((uid_s, from_raw, subject))
+                    elif _is_direct_french(msg):
+                        kept_important.append((uid_s, from_raw, subject))
+                    else:
+                        to_archive.append(uid_s)
+                except Exception:
+                    continue
+
+            # Déplacer vers Archives par lot
+            if to_archive:
+                for i in range(0, len(to_archive), 500):
+                    batch = to_archive[i:i+500]
+                    M.uid("MOVE", ",".join(batch), _ARCHIVES_FOLDER)
+
+            archived = len(to_archive)
+            M.logout()
+            return kept_important, to_archive, archived
+
+        try:
+            kept, archived_list, archived_count = await asyncio.get_event_loop().run_in_executor(None, _run)
+        except Exception as e:
+            log.error(f"email.auto_trier: {e}")
+            return f"❌ auto_trier erreur: {e}"
+
+        total = len(kept) + archived_count
+        if total == 0:
+            log.info("email.auto_trier: aucun nouveau message")
+            return "✅ auto_trier: aucun nouveau message"
+
+        # Notifier seulement s'il y a des emails importants
+        if kept:
+            from core.telegram_notifier import notify
+            lines = [f"📬 *{len(kept)} nouveau(x) email(s) — Courriels*\n"]
+            for uid_s, from_raw, subject in kept[:5]:
+                lines.append(f"• {from_raw[:50]}\n  _{subject[:60]}_")
+            if len(kept) > 5:
+                lines.append(f"_...et {len(kept)-5} autres_")
+            if archived_count:
+                lines.append(f"\n📁 {archived_count} déplacé(s) → Archives")
+            await notify("\n".join(lines))
+
+        log.info(f"email.auto_trier: {len(kept)} gardés, {archived_count} archivés")
+        return f"auto_trier: {len(kept)} Courriels, {archived_count} → Archives"
 
 
 # ── Instance globale ──────────────────────────────────────────────────────────

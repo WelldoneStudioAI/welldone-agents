@@ -564,6 +564,78 @@ async def stream_logs(
     )
 
 
+@app.post("/webhook/calcom")
+async def calcom_webhook(request: Request):
+    """
+    Reçoit les événements Cal.com (booking created / cancelled / rescheduled).
+    Envoie une notification Telegram immédiate à JP.
+    Pas de secret requis — Cal.com utilise un signing secret optionnel.
+    """
+    from config import TELEGRAM_ALLOWED_USER_ID, TELEGRAM_BOT_TOKEN
+    import httpx
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return {"status": "ignored", "reason": "invalid json"}
+
+    event_type = payload.get("triggerEvent", payload.get("type", "unknown"))
+    booking    = payload.get("payload", payload)
+
+    title      = booking.get("title") or booking.get("eventTitle") or "Rendez-vous"
+    start_time = booking.get("startTime") or booking.get("start") or ""
+    end_time   = booking.get("endTime") or booking.get("end") or ""
+    attendees  = booking.get("attendees") or []
+    organizer  = booking.get("organizer") or {}
+    notes      = booking.get("description") or booking.get("additionalNotes") or ""
+    meet_url   = booking.get("meetingUrl") or booking.get("videoCallUrl") or ""
+
+    # Formater les participants
+    attendee_lines = []
+    for a in attendees:
+        name  = a.get("name", "")
+        email = a.get("email", "")
+        attendee_lines.append(f"  • {name} — {email}" if name else f"  • {email}")
+
+    # Emoji selon l'événement
+    emoji_map = {
+        "BOOKING_CREATED":      "📅",
+        "BOOKING_CANCELLED":    "❌",
+        "BOOKING_RESCHEDULED":  "🔄",
+        "BOOKING_CONFIRMED":    "✅",
+    }
+    emoji = emoji_map.get(event_type.upper(), "📆")
+
+    lines = [f"{emoji} *Cal.com — {event_type.replace('_', ' ').title()}*", ""]
+    lines.append(f"*{title}*")
+    if start_time:
+        lines.append(f"🕐 {start_time}")
+        if end_time:
+            lines[-1] += f" → {end_time}"
+    if attendee_lines:
+        lines.append("👤 " + "\n".join(attendee_lines))
+    if notes:
+        lines.append(f"📝 {notes[:300]}")
+    if meet_url:
+        lines.append(f"🎥 [Rejoindre]({meet_url})")
+
+    message = "\n".join(lines)
+
+    async with httpx.AsyncClient() as client:
+        r = await client.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={
+                "chat_id":    TELEGRAM_ALLOWED_USER_ID,
+                "text":       message,
+                "parse_mode": "Markdown",
+            },
+            timeout=10,
+        )
+
+    log.info(f"calcom_webhook: {event_type} → Telegram {r.status_code}")
+    return {"status": "ok", "event": event_type}
+
+
 @app.post("/webhook/telegram")
 async def telegram_notify(payload: dict, _=Depends(verify_secret)):
     """
