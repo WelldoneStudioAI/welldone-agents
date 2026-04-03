@@ -789,7 +789,44 @@ class FramerAgent(BaseAgent):
             "supprimer":   self.supprimer,
             "collections": self.collections,
             "publier":     self.publier,
+            "gemini-test": self.gemini_test,
         }
+
+    async def gemini_test(self, context: dict | None = None) -> str:
+        """Diagnostic Gemini depuis Railway : version SDK, clé, génération test."""
+        import importlib.metadata
+        lines = []
+        try:
+            v = importlib.metadata.version("google-genai")
+            lines.append(f"📦 google-genai: {v}")
+        except Exception:
+            lines.append("📦 google-genai: version inconnue")
+
+        lines.append(f"🔑 GEMINI_API_KEY: {'✅ présente' if GEMINI_API_KEY else '❌ MANQUANTE'} (len={len(GEMINI_API_KEY)})")
+        lines.append(f"🪣 GCS_BUCKET: {GCS_BUCKET!r}")
+
+        if not GEMINI_API_KEY:
+            return "\n".join(lines)
+
+        try:
+            from google import genai as _genai
+            from google.genai import types as _gtypes
+            client = _genai.Client(api_key=GEMINI_API_KEY)
+            response = await asyncio.to_thread(
+                client.models.generate_images,
+                model="imagen-4.0-generate-001",
+                prompt="minimalist desk, natural light",
+                config=_gtypes.GenerateImagesConfig(number_of_images=1, aspect_ratio="16:9"),
+            )
+            if response.generated_images:
+                nb = len(response.generated_images[0].image.image_bytes)
+                lines.append(f"🖼 Gemini Imagen 4: ✅ {nb} bytes générés")
+            else:
+                lines.append("🖼 Gemini Imagen 4: ⚠️ réponse vide (0 images)")
+        except Exception as e:
+            lines.append(f"🖼 Gemini Imagen 4: ❌ {type(e).__name__}: {e}")
+
+        return "\n".join(lines)
 
     async def illustrer(self, context: dict | None = None) -> str:
         """
