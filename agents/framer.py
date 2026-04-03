@@ -802,8 +802,8 @@ class FramerAgent(BaseAgent):
         except Exception:
             lines.append("📦 google-genai: version inconnue")
 
-        lines.append(f"🔑 GEMINI_API_KEY: {'✅ présente' if GEMINI_API_KEY else '❌ MANQUANTE'} (len={len(GEMINI_API_KEY)})")
-        lines.append(f"🪣 GCS_BUCKET: {GCS_BUCKET!r}")
+        lines.append(f"🔑 Gemini key: {'✅ présente' if GEMINI_API_KEY else '❌ MANQUANTE'} (len={len(GEMINI_API_KEY)})")
+        lines.append(f"🪣 GCS bucket: {GCS_BUCKET!r}")
 
         if not GEMINI_API_KEY:
             return "\n".join(lines)
