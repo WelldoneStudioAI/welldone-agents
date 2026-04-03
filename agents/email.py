@@ -27,7 +27,7 @@ import asyncio, email, imaplib, json, logging, os, re, smtplib, ssl, textwrap
 from email.header import decode_header as _decode_header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from agents._base import BaseAgent
@@ -56,7 +56,26 @@ _ALL_ACCOUNTS = [
 
 # ── Persistance filtres sur disque ────────────────────────────────────────────
 _FILTERS_FILE = Path.home() / ".welldone" / "email_filters.json"
-_SENDER_MEMORY_FILE = Path.home() / ".welldone" / "email_sender_memory.json"
+_SENDER_MEMORY_FILE  = Path.home() / ".welldone" / "email_sender_memory.json"
+_PROCESSED_UIDS_FILE = Path.home() / ".welldone" / "email_processed_uids.json"
+
+def _load_processed_uids() -> dict:
+    try:
+        if _PROCESSED_UIDS_FILE.exists():
+            raw = json.loads(_PROCESSED_UIDS_FILE.read_text())
+            cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            return {acct: {uid: d for uid, d in uids.items() if d >= cutoff}
+                    for acct, uids in raw.items()}
+    except Exception as e:
+        log.warning(f"email: erreur chargement processed UIDs: {e}")
+    return {}
+
+def _save_processed_uids(processed: dict) -> None:
+    try:
+        _PROCESSED_UIDS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _PROCESSED_UIDS_FILE.write_text(json.dumps(processed, ensure_ascii=False, indent=2))
+    except Exception as e:
+        log.warning(f"email: erreur sauvegarde processed UIDs: {e}")
 
 def _load_filters() -> list[dict]:
     try:
@@ -1299,68 +1318,104 @@ class EmailAgent(BaseAgent):
 
     # ── AUTO TRIER — triage horaire automatique ───────────────────────────────
 
+    # Expéditeurs critiques qui ne doivent JAMAIS atterrir en Archives
+    _CRITICAL_DOMAINS = (
+        "cal.com", "calendly.com", "acuityscheduling.com",
+        "quickbooks.intuit.com", "stripe.com", "paypal.com",
+        "docusign.com", "hellosign.com", "pandadoc.com",
+    )
+
     async def auto_trier(self, ctx: dict | None = None) -> str:
         """
-        Triage automatique horaire :
-        - Scanne les emails UNSEEN dans INBOX
-        - Whitelist contact → garde dans Courriels
-        - Email direct en français (pas bulk) → garde dans Courriels
-        - Tout le reste → déplace vers Archives (INBOX.Archives)
-        Notifie via Telegram uniquement si des emails importants arrivent.
+        Triage automatique horaire (multi-comptes WHC + Hostinger) :
+        - Scanne les emails des 48 dernières heures dans INBOX (SINCE, pas UNSEEN)
+          → corrige le bug où Apple Mail marque les emails comme lus avant l'agent
+        - UIDs déjà traités ignorés (fichier JSON, TTL 7 jours)
+        - Domaines critiques (Cal.com, paiements…) → toujours garder + notifier
+        - Whitelist contact → garder + notifier
+        - Email direct en français (pas bulk) → garder + notifier
+        - Tout le reste → MOVE vers INBOX.Archives
         """
         global _KNOWN_CONTACTS
         if not _KNOWN_CONTACTS:
             _KNOWN_CONTACTS = _load_whitelist()
 
         def _run():
-            M = _connect()
-            M.select("INBOX")
+            processed_uids = _load_processed_uids()
+            all_kept: list[tuple] = []   # (uid, from, subject, account_label)
+            total_archived = 0
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            since_date = (datetime.now() - timedelta(hours=48)).strftime("%d-%b-%Y")
 
-            # Chercher tous les emails non lus
-            typ, data = M.uid("search", None, "UNSEEN")
-            unseen_uids = data[0].split() if data[0] else []
-
-            if not unseen_uids:
-                M.logout()
-                return [], [], 0
-
-            kept_important = []   # (uid, from, subject) à notifier
-            to_archive     = []   # uids à déplacer
-
-            for uid_b in unseen_uids:
-                uid_s = uid_b.decode()
-                try:
-                    typ2, msg_data = M.uid("fetch", uid_s, "(RFC822)")
-                    if not msg_data or not isinstance(msg_data[0], tuple):
-                        continue
-                    msg = email.message_from_bytes(msg_data[0][1])
-
-                    from_raw = _decode(msg.get("From", ""))
-                    subject  = _decode(msg.get("Subject", "(sans sujet)"))
-                    m = re.search(r"<([^>]+)>", from_raw)
-                    sender = m.group(1).lower() if m else from_raw.strip().lower()
-
-                    if sender in _KNOWN_CONTACTS:
-                        kept_important.append((uid_s, from_raw, subject))
-                    elif _is_direct_french(msg):
-                        kept_important.append((uid_s, from_raw, subject))
-                    else:
-                        to_archive.append(uid_s)
-                except Exception:
+            for host, port, user, password, label in _ALL_ACCOUNTS:
+                M = _connect_account(host, port, user, password)
+                if M is None:
                     continue
+                try:
+                    M.select("INBOX")
+                    # SINCE au lieu de UNSEEN — Apple Mail marque déjà comme lu
+                    typ, data = M.uid("search", None, f"SINCE {since_date}")
+                    all_uids = data[0].split() if data[0] else []
 
-            # Déplacer vers Archives par lot
-            if to_archive:
-                for i in range(0, len(to_archive), 500):
-                    batch = to_archive[i:i+500]
-                    M.uid("MOVE", ",".join(batch), _ARCHIVES_FOLDER)
+                    acct_processed = processed_uids.get(label, {})
+                    kept: list[tuple] = []
+                    to_archive: list[str] = []
 
-            archived = len(to_archive)
-            M.logout()
-            return kept_important, to_archive, archived
+                    for uid_b in all_uids:
+                        uid_s = uid_b.decode() if isinstance(uid_b, bytes) else str(uid_b)
+                        if uid_s in acct_processed:
+                            continue   # déjà traité
+
+                        try:
+                            typ2, msg_data = M.uid("fetch", uid_s, "(RFC822)")
+                            if not msg_data or not isinstance(msg_data[0], tuple):
+                                continue
+                            msg = email.message_from_bytes(msg_data[0][1])
+
+                            from_raw = _decode(msg.get("From", ""))
+                            subject  = _decode(msg.get("Subject", "(sans sujet)"))
+                            m_match  = re.search(r"<([^>]+)>", from_raw)
+                            sender   = m_match.group(1).lower() if m_match else from_raw.strip().lower()
+
+                            acct_processed[uid_s] = today_str   # marquer traité
+
+                            if any(d in sender for d in self._CRITICAL_DOMAINS):
+                                kept.append((uid_s, from_raw, subject, label))
+                            elif sender in _KNOWN_CONTACTS:
+                                kept.append((uid_s, from_raw, subject, label))
+                            elif _is_direct_french(msg):
+                                kept.append((uid_s, from_raw, subject, label))
+                            else:
+                                to_archive.append(uid_s)
+                        except Exception as e:
+                            log.warning(f"auto_trier fetch {uid_s} ({label}): {e}")
+                            continue
+
+                    processed_uids[label] = acct_processed
+                    _save_processed_uids(processed_uids)
+
+                    if to_archive:
+                        for i in range(0, len(to_archive), 500):
+                            batch = to_archive[i:i + 500]
+                            try:
+                                M.uid("MOVE", ",".join(batch), _ARCHIVES_FOLDER)
+                            except Exception as e:
+                                log.warning(f"auto_trier MOVE ({label}): {e}")
+
+                    all_kept.extend(kept)
+                    total_archived += len(to_archive)
+                except Exception as e:
+                    log.warning(f"auto_trier {label}: {e}")
+                finally:
+                    try:
+                        M.logout()
+                    except Exception:
+                        pass
+
+            return all_kept, total_archived
 
         try:
-            kept, archived_list, archived_count = await asyncio.get_event_loop().run_in_executor(None, _run)
+            kept, archived_count = await asyncio.get_event_loop().run_in_executor(None, _run)
         except Exception as e:
             log.error(f"email.auto_trier: {e}")
             return f"❌ auto_trier erreur: {e}"
@@ -1370,20 +1425,19 @@ class EmailAgent(BaseAgent):
             log.info("email.auto_trier: aucun nouveau message")
             return "✅ auto_trier: aucun nouveau message"
 
-        # Notifier seulement s'il y a des emails importants
         if kept:
             from core.telegram_notifier import notify
-            lines = [f"📬 *{len(kept)} nouveau(x) email(s) — Courriels*\n"]
-            for uid_s, from_raw, subject in kept[:5]:
-                lines.append(f"• {from_raw[:50]}\n  _{subject[:60]}_")
+            lines = [f"📬 *{len(kept)} nouveau(x) email(s) important(s)*\n"]
+            for uid_s, from_raw, subject, acct in kept[:5]:
+                lines.append(f"• [{acct}] {from_raw[:45]}\n  _{subject[:60]}_")
             if len(kept) > 5:
-                lines.append(f"_...et {len(kept)-5} autres_")
+                lines.append(f"_...et {len(kept) - 5} autres_")
             if archived_count:
                 lines.append(f"\n📁 {archived_count} déplacé(s) → Archives")
             await notify("\n".join(lines))
 
         log.info(f"email.auto_trier: {len(kept)} gardés, {archived_count} archivés")
-        return f"auto_trier: {len(kept)} Courriels, {archived_count} → Archives"
+        return f"auto_trier: {len(kept)} importants, {archived_count} → Archives"
 
 
 # ── Instance globale ──────────────────────────────────────────────────────────

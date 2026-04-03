@@ -24,10 +24,11 @@ class AnalyticsAgent(BaseAgent):
     @property
     def commands(self):
         return {
-            "rapport":      self.rapport,
-            "sources":      self.sources,
-            "keywords":     self.keywords,
+            "rapport":       self.rapport,
+            "sources":       self.sources,
+            "keywords":      self.keywords,
             "opportunities": self.opportunities,
+            "conversions":   self.conversions,
         }
 
     # ── GA4 ───────────────────────────────────────────────────────────────────
@@ -39,7 +40,8 @@ class AnalyticsAgent(BaseAgent):
             totals, sources_rows, pages_rows, organic, direct, start, end = self._ga4_summary(days)
             keywords, opps = self._gsc_keywords()
             analyse  = self._analyse(totals, organic, direct, opps)
-            html     = self._build_html(totals, sources_rows, pages_rows, keywords, opps, analyse, start, end, days)
+            events   = self._ga4_events(days)
+            html     = self._build_html(totals, sources_rows, pages_rows, keywords, opps, analyse, start, end, days, events)
             self._send_email(html, start, end)
             log.info(f"analytics.rapport sent days={days}")
             return f"✅ Rapport Analytics envoyé ({start} → {end})\n📊 {totals['sessions']:,} sessions · {totals['users']:,} utilisateurs"
@@ -146,7 +148,51 @@ class AnalyticsAgent(BaseAgent):
             log.error(f"analytics.opportunities error: {e}")
             return f"❌ Erreur opportunités GSC: {e}"
 
+    async def conversions(self, context: dict | None = None) -> str:
+        """Clics CTA, formulaires et événements de conversion (Google Tag / GA4)."""
+        days = int((context or {}).get("days", 30))
+        try:
+            rows = self._ga4_events(days)
+            if not rows:
+                return f"📊 Aucun événement de conversion dans GA4 ({days}j).\n_Vérifie que Google Tag est bien configuré sur les boutons._"
+            lines = [f"🎯 *Conversions & CTA ({days}j) :*\n"]
+            for name, count in rows:
+                lines.append(f"• `{name}` — {count:,} fois")
+            return "\n".join(lines)
+        except Exception as e:
+            log.error(f"analytics.conversions error: {e}")
+            return f"❌ Erreur conversions: {e}"
+
     # ── Helpers privés ────────────────────────────────────────────────────────
+
+    # Événements GA4 "bruit de fond" à masquer dans les rapports de conversion
+    _NOISE_EVENTS = {
+        "page_view", "session_start", "first_visit", "user_engagement",
+        "scroll", "click",  # click générique GA4 — trop large
+    }
+
+    def _ga4_events(self, days: int = 30) -> list[tuple[str, int]]:
+        """Retourne les événements GA4 triés par count, bruit filtré."""
+        from google.analytics.data_v1beta import BetaAnalyticsDataClient
+        from google.analytics.data_v1beta.types import (
+            RunReportRequest, DateRange, Dimension, Metric, OrderBy
+        )
+        end   = datetime.today().strftime("%Y-%m-%d")
+        start = (datetime.today() - timedelta(days=days)).strftime("%Y-%m-%d")
+        creds  = get_service_account_creds(GA4_SCOPES)
+        client = BetaAnalyticsDataClient(credentials=creds)
+        resp   = client.run_report(RunReportRequest(
+            property=f"properties/{GA4_PROPERTY_ID}",
+            dimensions=[Dimension(name="eventName")],
+            metrics=[Metric(name="eventCount")],
+            date_ranges=[DateRange(start_date=start, end_date=end)],
+            order_bys=[OrderBy(metric=OrderBy.MetricOrderBy(metric_name="eventCount"), desc=True)],
+        ))
+        return [
+            (row.dimension_values[0].value, int(row.metric_values[0].value))
+            for row in resp.rows
+            if row.dimension_values[0].value not in self._NOISE_EVENTS
+        ]
 
     def _ga4_summary(self, days: int = 7):
         from google.analytics.data_v1beta import BetaAnalyticsDataClient
@@ -279,7 +325,7 @@ class AnalyticsAgent(BaseAgent):
 
         return lignes
 
-    def _build_html(self, totals, sources_rows, pages_rows, keywords, opps, analyse, start, end, days) -> str:
+    def _build_html(self, totals, sources_rows, pages_rows, keywords, opps, analyse, start, end, days, events=None) -> str:
         today = datetime.now().strftime("%d %b %Y")
 
         def badge(val):
@@ -355,10 +401,28 @@ class AnalyticsAgent(BaseAgent):
   <h3 style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:24px 0 8px">Mots-clés Google (28 jours)</h3>
   {'<table style="' + ts + '"><tr><th style="' + th + '">Mot-clé</th><th style="' + th + ';text-align:right">Impr.</th><th style="' + th + ';text-align:right">Clics</th><th style="' + th + ';text-align:right">Pos.</th></tr>' + kw_rows + '</table>' if kw_rows else '<p style="color:#666;font-size:13px">Aucune donnée Search Console.</p>'}
   {('<h3 style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:24px 0 8px">🚀 Opportunités SEO (pos. 4-20)</h3><table style="' + ts + '"><tr><th style="' + th + '">Mot-clé</th><th style="' + th + ';text-align:right">Impressions</th><th style="' + th + ';text-align:right">Position</th></tr>' + opp_rows + '</table>') if opp_rows else ''}
+  {self._build_events_html(events or [], ts, th, td, tdr)}
   <div style="border-top:1px solid #1a1a1a;margin-top:32px;padding-top:16px;text-align:center">
     <p style="margin:0;color:#444;font-size:11px">Welldone Studio AI System · Rapport automatique chaque lundi 8h</p>
   </div>
 </div></body></html>"""
+
+    def _build_events_html(self, events, ts, th, td, tdr) -> str:
+        if not events:
+            return '<p style="color:#555;font-size:13px;margin-top:24px">Aucun événement de conversion enregistré. Vérifie la config Google Tag.</p>'
+        rows = "".join(
+            f'<tr><td style="{td};font-family:monospace;font-size:12px">{name}</td>'
+            f'<td style="{tdr}">{count:,}</td></tr>'
+            for name, count in events[:15]
+        )
+        return (
+            '<h3 style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:24px 0 8px">'
+            '🎯 Événements & CTA (clics boutons, formulaires)</h3>'
+            f'<table style="{ts}"><tr>'
+            f'<th style="{th}">Événement</th>'
+            f'<th style="{th};text-align:right">Déclenchements</th>'
+            f'</tr>{rows}</table>'
+        )
 
     def _send_email(self, html: str, start: str, end: str):
         import base64
