@@ -1435,7 +1435,7 @@ class EmailAgent(BaseAgent):
         total = len(kept) + archived_count
         if total == 0:
             log.info("email.auto_trier: aucun nouveau message")
-            return "✅ auto_trier: aucun nouveau message"
+            return ""  # Retour vide = pas de notification Telegram (évite le spam)
 
         if kept:
             from core.telegram_notifier import notify

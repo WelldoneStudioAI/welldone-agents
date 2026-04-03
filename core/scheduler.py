@@ -20,7 +20,8 @@ async def _run_scheduled_job(agent_name: str, command: str, telegram_bot=None, c
     try:
         result = await dispatch(agent_name, command)
         log.info(f"scheduler: {agent_name}.{command} done")
-        if telegram_bot and chat_id:
+        # Notifier Telegram seulement si le résultat est non-vide (évite le spam "rien à faire")
+        if telegram_bot and chat_id and result and result.strip():
             await telegram_bot.send_message(chat_id=chat_id, text=f"⏰ *Tâche auto:* /{agent_name} {command}\n\n{result}", parse_mode="Markdown")
     except Exception as e:
         msg = f"❌ Erreur tâche auto {agent_name}.{command}: {e}"
