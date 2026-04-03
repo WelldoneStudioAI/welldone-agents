@@ -90,7 +90,7 @@ FRAMER_COLLECTION_ID = os.environ.get("FRAMER_COLLECTION_ID", "ERDJzzQHr")  # We
 FRAMER_PROJECTS_COLLECTION_ID = os.environ.get("FRAMER_PROJECTS_COLLECTION_ID", "")
 # URL de staging Framer (ex: https://welldone-studio.framer.website)
 # Trouve-la dans Framer → ton projet → Settings → Domains → Framer subdomain
-FRAMER_STAGING_URL = os.environ.get("FRAMER_STAGING_URL", "")
+FRAMER_STAGING_URL = os.environ.get("FRAMER_STAGING_URL", "https://fabulous-selfies-613710.framer.app")
 # Unsplash Developer API (gratuit — https://unsplash.com/developers)
 # Ajouter UNSPLASH_ACCESS_KEY dans Railway pour des images de qualité
 UNSPLASH_ACCESS_KEY  = os.environ.get("UNSPLASH_ACCESS_KEY", "")

@@ -42,7 +42,7 @@ class PipelineBudget:
     Budget dur : 15 000 tokens, 240s.
     """
     max_tokens: int = 15_000
-    max_seconds: int = 240
+    max_seconds: int = 480
 
     def __init__(self):
         self.used_tokens: int = 0
@@ -144,6 +144,7 @@ class BlogPipelineAgent(BaseAgent):
             etape1_ok = False
             images_ok = False
             img_count = 0
+            actual_slug = ""
 
             # ── Étape 1 : rédaction ────────────────────────────────────────────
             log.info(f"blog_pipeline [{attempt}]: étape 1 — framer.rédiger")
@@ -164,8 +165,17 @@ class BlogPipelineAgent(BaseAgent):
                 )
                 article_result = {"raw": raw1, "sujet": sujet}
                 etape1_ok = True
+                actual_slug = _extract_slug(raw1)
+                if actual_slug:
+                    log.info(f"blog_pipeline [{attempt}]: slug extrait = {actual_slug!r}")
+                else:
+                    log.warning(f"blog_pipeline [{attempt}]: slug non trouvé dans la réponse rédiger")
                 budget.sync_tokens()
                 log.info(f"blog_pipeline [{attempt}]: étape 1 OK — tokens={budget.used_tokens}")
+                await notify(
+                    f"✍️ *Rédaction OK* — génération des images Gemini en cours…\n"
+                    f"_Sujet : {sujet[:80]}_"
+                )
 
             except asyncio.TimeoutError:
                 log.error(f"blog_pipeline [{attempt}]: étape 1 TIMEOUT (120s)")
@@ -203,8 +213,11 @@ class BlogPipelineAgent(BaseAgent):
             log.info(f"blog_pipeline [{attempt}]: étape 2 — framer.illustrer")
             try:
                 budget.check()
+                ctx_illustrer: dict = {"sujet": sujet}
+                if actual_slug:
+                    ctx_illustrer["slug"] = actual_slug
                 raw2 = await asyncio.wait_for(
-                    dispatch("framer", "illustrer", {"sujet": sujet}),
+                    dispatch("framer", "illustrer", ctx_illustrer),
                     timeout=135,
                 )
                 images_result = {"raw": raw2}
@@ -340,7 +353,13 @@ class BlogPipelineAgent(BaseAgent):
         score_emoji = "🟢" if score >= 8 else "🟡"
         retry_note = f" _(corrigé en {attempt} tentative{'s' if attempt > 1 else ''})_" if attempt > 1 else ""
 
-        lien = _extract_lien(article_result.get("raw", ""))
+        slug = _extract_slug(article_result.get("raw", ""))
+        from config import FRAMER_STAGING_URL
+        if slug and FRAMER_STAGING_URL:
+            lien_display = f"[Voir l'article →]({FRAMER_STAGING_URL.rstrip('/')}/journal/{slug})"
+        else:
+            raw_lien = _extract_lien(article_result.get("raw", ""))
+            lien_display = raw_lien if raw_lien else ""
 
         lines = [
             f"✅ *Article publié et validé !*{retry_note}",
@@ -350,8 +369,8 @@ class BlogPipelineAgent(BaseAgent):
             f"{'✅' if images_ok else '⚠️'} Images",
         ]
 
-        if lien:
-            lines.append(f"\n🔗 {lien}")
+        if lien_display:
+            lines.append(f"\n🔗 {lien_display}")
 
         lines.append(
             f"\n_Durée : {elapsed:.0f}s | Tokens : {tokens_used}/{budget.max_tokens}_"

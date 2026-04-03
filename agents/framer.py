@@ -571,7 +571,7 @@ async def _generate_image_gemini(visual_context: str) -> bytes | None:
         )
         response = await asyncio.to_thread(
             client.models.generate_images,
-            model="imagen-3.0-generate-001",
+            model="imagen-4.0-generate-001",
             prompt=prompt,
             config=gtypes.GenerateImagesConfig(
                 number_of_images=1,
