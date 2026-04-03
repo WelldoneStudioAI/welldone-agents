@@ -49,8 +49,9 @@ HST_EMAIL     = os.environ.get("HST_EMAIL", "jptanguay@awelldone.com")
 HST_PASS      = os.environ.get("HST_PASSWORD", "")
 
 # Toutes les boîtes à surveiller (host, port, user, pass, label)
+# WHC retiré : mail.awelldone.com = NXDOMAIN (MX awelldone.com → Hostinger)
+# Ajouter HST_PASSWORD dans Railway pour activer la surveillance Hostinger
 _ALL_ACCOUNTS = [
-    (IMAP_HOST, IMAP_PORT, WHC_EMAIL, WHC_PASS,  "WHC"),
     (HST_IMAP_HOST, HST_IMAP_PORT, HST_EMAIL, HST_PASS, "Hostinger"),
 ]
 
@@ -1430,7 +1431,7 @@ class EmailAgent(BaseAgent):
             kept, archived_count = await asyncio.get_event_loop().run_in_executor(None, _run)
         except Exception as e:
             log.error(f"email.auto_trier: {e}")
-            return f"❌ auto_trier erreur: {e}"
+            return ""  # Erreur silencieuse — loggée mais pas de spam Telegram
 
         total = len(kept) + archived_count
         if total == 0:
