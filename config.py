@@ -4,6 +4,13 @@ Toutes les variables d'environnement sont lues ici, nulle part ailleurs.
 """
 import os
 
+# Chargement automatique du .env local (no-op en production Railway où le fichier n'existe pas)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(override=False)  # override=False : Railway env vars ont priorité sur .env
+except ImportError:
+    pass  # python-dotenv absent = pas grave, Railway fournit les vars directement
+
 # ── Telegram ──────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN       = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_ALLOWED_USER_ID = int(os.environ.get("TELEGRAM_ALLOWED_USER_ID", "8434904512"))
