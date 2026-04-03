@@ -163,8 +163,10 @@ class WatchdogAgent(BaseAgent):
                     return (name, False, "ANTHROPIC_API_KEY manquant")
                 client = anthropic.Anthropic(api_key=key)
                 # Appel minimal : 1 token
+                # Utiliser le modèle le moins coûteux pour le ping (haiku)
+                model_to_test = "claude-haiku-4-5"
                 resp = client.messages.create(
-                    model="claude-haiku-4-5-20251001",
+                    model=model_to_test,
                     max_tokens=1,
                     messages=[{"role": "user", "content": "ping"}],
                 )

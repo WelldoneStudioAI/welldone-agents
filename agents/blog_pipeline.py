@@ -209,9 +209,11 @@ class BlogPipelineAgent(BaseAgent):
                 )
                 images_result = {"raw": raw2}
                 images_ok = True
-                raw2_lower = raw2.lower()
-                img_count = min(raw2_lower.count("image") + raw2_lower.count("photo"), 8)
-                log.info(f"blog_pipeline [{attempt}]: étape 2 OK — img≈{img_count}")
+                # Chercher un chiffre explicite ("3 image(s)", "uploaded 2", etc.)
+                import re as _re
+                _m = _re.search(r'\b([1-9][0-9]?)\s*image', raw2, flags=_re.IGNORECASE)
+                img_count = int(_m.group(1)) if _m else (0 if "❌" in raw2 or "erreur" in raw2.lower() else 1)
+                log.info(f"blog_pipeline [{attempt}]: étape 2 OK — img_count={img_count} (extrait du résultat)")
             except asyncio.TimeoutError:
                 log.warning(f"blog_pipeline [{attempt}]: étape 2 TIMEOUT — continue sans images")
                 images_result = {"erreur": "timeout images 135s"}

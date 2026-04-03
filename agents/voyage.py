@@ -315,7 +315,11 @@ def _search_amadeus(departure_id: str, arrival_id: str, outbound_date: str,
 
         carriers: dict = data.get("dictionaries", {}).get("carriers", {})
 
-        lines = [f"=== {departure_id}→{arrival_id} ({outbound_date}) [Amadeus] ==="]
+        sandbox_prefix = ""
+        if "test" in base_url:
+            sandbox_prefix = "⚠️ [SANDBOX — DONNÉES FICTIVES — test.api.amadeus.com]\n"
+
+        lines = [f"{sandbox_prefix}=== {departure_id}→{arrival_id} ({outbound_date}) [Amadeus] ==="]
         for i, offer in enumerate(offers[:5]):
             price    = offer["price"]["grandTotal"]
             cur      = offer["price"]["currency"]

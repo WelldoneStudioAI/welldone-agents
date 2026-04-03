@@ -13,13 +13,18 @@ log = logging.getLogger(__name__)
 # Registre global: {agent_name: BaseAgent}
 REGISTRY: dict[str, BaseAgent] = {}
 
+# Agents qui ont échoué au chargement: {module_name: str(error)}
+FAILED_AGENTS: dict[str, str] = {}
+
 
 def discover_agents() -> dict[str, BaseAgent]:
     """
     Découvre et enregistre tous les agents du package agents/.
     Ignore les modules commençant par '_'.
+    Les échecs de chargement sont stockés dans FAILED_AGENTS (jamais silencieux).
     """
     REGISTRY.clear()
+    FAILED_AGENTS.clear()
     for finder, module_name, ispkg in pkgutil.iter_modules(agents_pkg.__path__):
         if module_name.startswith("_"):
             continue
@@ -28,9 +33,18 @@ def discover_agents() -> dict[str, BaseAgent]:
             if hasattr(mod, "agent") and isinstance(mod.agent, BaseAgent):
                 REGISTRY[mod.agent.name] = mod.agent
                 log.info(f"✅ Agent enregistré: {mod.agent.name}")
+            else:
+                FAILED_AGENTS[module_name] = "module chargé mais aucun objet `agent` valide trouvé"
+                log.warning(f"⚠️ {module_name}: pas d'objet agent BaseAgent exposé")
         except Exception as e:
-            log.error(f"❌ Erreur chargement agent {module_name}: {e}")
+            FAILED_AGENTS[module_name] = str(e)
+            log.error(f"❌ Erreur chargement agent {module_name}: {e}", exc_info=True)
 
+    if FAILED_AGENTS:
+        log.error(
+            f"Dispatcher: {len(FAILED_AGENTS)} agent(s) en échec → "
+            + ", ".join(f"{k}: {v[:60]}" for k, v in FAILED_AGENTS.items())
+        )
     log.info(f"Dispatcher: {len(REGISTRY)} agents chargés → {list(REGISTRY.keys())}")
     return REGISTRY
 
@@ -71,8 +85,24 @@ async def help_text() -> str:
         if agent.schedules:
             for s in agent.schedules:
                 lines.append(f"  ⏰ Auto: {s['command']} ({s['cron']})")
+
+    if FAILED_AGENTS:
+        lines.append("\n⚠️ *Agents en échec au démarrage :*")
+        for module, err in FAILED_AGENTS.items():
+            lines.append(f"  ❌ `{module}` — {err[:80]}")
+
     lines.append("\n💬 Ou envoie un message naturel — Claude comprend et route automatiquement.")
     return "\n\n".join(lines)
+
+
+def failed_agents_report() -> str:
+    """Retourne un rapport sur les agents qui ont échoué au chargement."""
+    if not FAILED_AGENTS:
+        return "✅ Tous les agents ont été chargés sans erreur."
+    lines = [f"⚠️ *{len(FAILED_AGENTS)} agent(s) en échec au démarrage :*\n"]
+    for module, err in FAILED_AGENTS.items():
+        lines.append(f"❌ `{module}` : {err[:120]}")
+    return "\n".join(lines)
 
 
 def get_all_schedules() -> list[tuple[str, str, str]]:

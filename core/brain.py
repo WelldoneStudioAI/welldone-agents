@@ -73,6 +73,7 @@ Agents disponibles et leurs responsabilités :
   → Utilise quand JP dit "génère un article complet", "pipeline blog", "/blog rédige", "article complet avec images"
   → context doit avoir: sujet (str — l'idée ou le sujet complet de l'article)
 - framer: {rédiger, liste, supprimer, collections, publier} → articles de blog Framer CMS (awelldone.studio/journal/)
+- layout_guardian: {inspecter, juge, rapport} → Framer Layout Guardian — détecte les problèmes de mise en page (overflow, responsive, alignement) et propose des corrections minimales sans redesign. Utilise quand JP dit "inspecte ma page", "problème layout", "responsive cassé", "vérifie le design", "audit UI"
 - email: {trier, lire, chercher, résumer, rédiger, envoyer, filtres, créer_filtre, appliquer_filtres, dossiers} → boîte WHC jptanguay@awelldone.com
 - chat: {respond} → conversation générale, rédaction, brainstorm
 

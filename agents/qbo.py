@@ -106,8 +106,10 @@ def _next_invoice_number() -> str:
         return f"{prefix}{seq:03d}"
     except Exception as e:
         log.error(f"qbo._next_invoice_number error: {e}")
-        # Fallback sécurisé si QBO inaccessible
-        return f"{prefix}001"
+        # Fallback sécurisé si QBO inaccessible — suffixe basé sur l'heure pour éviter les doublons
+        import time as _time
+        ts_suffix = int(_time.time()) % 10000
+        return f"WS-{today}-T{ts_suffix}"
 
 
 def _get_qbo_tax_code() -> str | None:
@@ -129,7 +131,7 @@ def _get_qbo_tax_code() -> str | None:
                 return code["Id"]
         # Sinon, prendre le premier code non-exempt
         for code in codes:
-            if not code.get("Taxable") is False and code.get("Name", "") not in ("NON", "EXEMPT", "Out of scope"):
+            if code.get("Taxable") != False and code.get("Name", "") not in ("NON", "EXEMPT", "Out of scope"):  # noqa: E712
                 log.info(f"qbo: TaxCode fallback → {code['Name']} (Id={code['Id']})")
                 return code["Id"]
         return None

@@ -113,8 +113,8 @@ class GmailAgent(BaseAgent):
                 name = p.get("names", [{}])[0].get("displayName", "")
                 for e in p.get("emailAddresses", []):
                     results.append({"name": name, "email": e.get("value"), "source": "Contacts"})
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"gmail.search_contact: People API failed (scope manquant ou API désactivée): {e}")
 
         # 2. Fallback Gmail
         if not results:
@@ -136,8 +136,8 @@ class GmailAgent(BaseAgent):
                                 seen.add(match.group(0))
                                 display = h["value"].split("<")[0].strip().strip('"') or match.group(0)
                                 results.append({"name": display, "email": match.group(0), "source": "Gmail"})
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning(f"gmail.search_contact: Gmail fallback failed: {e}")
 
         if not results:
             return f"❌ Aucun contact trouvé pour « {query} »"

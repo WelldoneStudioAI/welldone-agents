@@ -110,11 +110,19 @@ async def main():
             "chef-marketing": ("blog",      "rédiger"),
             "chef-seo":       ("analytics", "rapport"),
             "chef-design":    ("framer",    "liste"),
-            "chef-email":     ("email",     "trier"),
+            "chef-email":           ("email", "trier"),
+            "email-filtres":        ("email", "filtres"),
+            "email-creer-filtre":   ("email", "créer_filtre"),
+            "email-appliquer":      ("email", "appliquer_filtres"),
+            "email-whitelist":      ("email", "construire_whitelist"),
+            "email-trier-boite":    ("email", "trier_boite"),
+            "email-auto-trier":     ("email", "auto_trier"),
             "veille":         ("veille",    "run"),
             "blog-rediger":   ("blog",      "rédiger"),
             "analytics":      ("analytics", "rapport"),
-            "framer-rediger": ("framer",    "rédiger"),
+            "framer-rediger":   ("framer",          "rédiger"),
+            "layout-guardian":  ("layout_guardian", "inspecter"),
+            "layout-juge":      ("layout_guardian", "juge"),
         }
 
         class _NativeCtx(BaseModel):
@@ -127,6 +135,9 @@ async def main():
             agentId: str | None = None
             companyId: str | None = None
             context: _NativeCtx | None = None
+            sujet: str | None = None
+            page: str | None = None
+            url: str | None = None
 
         def _check_secret(authorization: str = Header(default="")):
             if not _WEBHOOK_SECRET:
@@ -171,9 +182,12 @@ async def main():
                     raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' non trouvé")
                 agent = REGISTRY[agent_name]
                 budget = SessionBudget(limit=budget_tokens)
+                agent_ctx = {"task_id": task_id, "wake_reason": ctx.wakeReason or "task_assigned"}
+                if payload.sujet: agent_ctx["sujet"] = payload.sujet
+                if payload.page:  agent_ctx["page"]  = payload.page
+                if payload.url:   agent_ctx["url"]   = payload.url
                 result = await _aio.wait_for(
-                    agent.run_command(command, {"task_id": task_id,
-                                               "wake_reason": ctx.wakeReason or "task_assigned"}),
+                    agent.run_command(command, agent_ctx),
                     timeout=300,
                 )
                 return {"status": "success", "result": str(result),

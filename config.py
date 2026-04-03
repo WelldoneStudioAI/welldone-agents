@@ -76,7 +76,7 @@ AMADEUS_API_SECRET = os.environ.get("AMADEUS_API_SECRET", "")
 AMADEUS_BASE_URL   = os.environ.get("AMADEUS_BASE_URL", "https://test.api.amadeus.com")
 
 # ── Framer CMS (Blog awelldone.studio) ───────────────────────────────────────
-FRAMER_API_KEY       = os.environ.get("FRAMER_API_KEY", "fr_2xsx07vykt81c9y2p0krj2xgmk")
+FRAMER_API_KEY       = os.environ.get("FRAMER_API_KEY", "")  # Requis: FRAMER_API_KEY dans Railway
 FRAMER_COLLECTION_ID = os.environ.get("FRAMER_COLLECTION_ID", "ERDJzzQHr")  # Welldone Studio-Blog
 # Collection des projets (pour les photos de portfolio dans les articles de blog)
 # → Lancer `framer collections` dans Telegram pour trouver l'ID correct
