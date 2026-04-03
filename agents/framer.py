@@ -563,10 +563,12 @@ async def _generate_image_gemini(visual_context: str) -> bytes | None:
     from google.genai import types as gtypes
     client = genai.Client(api_key=GEMINI_API_KEY)
     prompt = (
-        "Welldone Studio aesthetic: minimalist, neutral tones, natural light, "
-        "premium textures, editorial photography style, no text, no watermarks, "
-        "no logos, commercial photography quality. "
-        f"Project context: {visual_context}"
+        "Authentic editorial photography, looks handcrafted by a human photographer. "
+        "Welldone Studio aesthetic: minimalist, warm neutral tones, natural window light, "
+        "premium materials, genuine candid moments, no stock photo feel. "
+        "Device screens (if present) show real creative work: brand identity, web design, photography portfolios. "
+        "No text overlays, no watermarks, no AI-looking artifacts. Commercial photography quality. "
+        f"{visual_context}"
     )
     response = await asyncio.to_thread(
         client.models.generate_images,
@@ -889,23 +891,25 @@ class FramerAgent(BaseAgent):
             # Construire un brief visuel à partir du titre (meilleur que le slug brut)
             titre_clean  = titre.replace("_", " ").strip()
             visual_brief = (
-                f"Editorial photography for a professional business article titled: '{titre_clean}'. "
-                f"Welldone Studio aesthetic: minimalist, neutral tones, natural light, Quebec context."
+                f"Editorial photography for a branding and creative studio article about: '{titre_clean}'. "
+                f"Welldone Studio: minimalist Montreal creative agency, neutral tones, natural light, "
+                f"authentic human work visible on screens (brand identity, photography, web design), "
+                f"feels handcrafted not AI-generated."
             )
             article      = {}
 
         log.info(f"framer.illustrer: génération Gemini pour slug={slug}")
 
-        # Variations visuelles par position pour éviter la répétition
+        # Variations visuelles par position — écrans avec contenu de studio réel
         _IMG_ANGLES = [
-            "hero shot, wide angle, dramatic lighting",
-            "close-up detail, texture and craft, intimate",
-            "environmental portrait, person in context, candid",
-            "abstract concept, geometric, symbolic",
-            "overhead flat lay, organized workspace",
-            "architectural or urban context, exterior",
-            "data visualization metaphor, charts, growth",
-            "human connection, collaboration, hands",
+            "wide hero shot, creative professional at desk, laptop screen showing brand identity logo design project, natural window light, editorial",
+            "close-up hands on iPad Pro, screen displaying a photography portfolio layout with editorial images, coffee cup beside, authentic candid",
+            "over-the-shoulder view, designer working, monitor showing a clean website mockup with real typography and photography, studio setting",
+            "flat lay overhead, open MacBook showing a branding project with color palettes and logo variations, notebook with handwritten notes beside",
+            "person reviewing printed brand guidelines spread on table, laptop open showing design software with a real project, warm studio light",
+            "side profile, creative professional on phone call, second screen visible showing a client presentation with photography and brand visuals",
+            "close-up laptop screen detail, Figma or design tool interface visible with a real web project, hands typing, shallow depth of field",
+            "two people in minimal meeting room, one showing iPad with portfolio images of completed branding projects, genuine conversation moment",
         ]
 
         # Générer toutes les images en parallèle (timeout 60s/image)
