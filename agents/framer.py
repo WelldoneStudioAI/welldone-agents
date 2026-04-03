@@ -1190,39 +1190,15 @@ class FramerAgent(BaseAgent):
                 f"🔍 Vérifie FRAMER_API_KEY dans Railway."
             )
 
-        # ── 5. QA bloquant : vérifie slug dans CMS + publish + deployment ID ──────
-        log.info(f"framer.rediger: QA en cours pour slug={slug}...")
-        qa = await framer_qa_verify(slug)
-
-        img_count  = len([f for f in IMAGE_FIELDS if field_data.get(FIELD_MAP[f]["id"])])
-        img_src    = img_source
-        editor_url = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
-
-        # ── 6. Message de confirmation — URL vérifiée ou erreur QA détaillée ──
-        if not qa.get("ok"):
-            qa_step  = qa.get("step", "inconnu")
-            qa_error = qa.get("error", "Erreur QA inconnue")
-            log.error(f"framer.rediger: QA ÉCHOUÉ étape={qa_step} — {qa_error}")
-            # Inclure le slug pour que blog_pipeline puisse l'extraire et le passer à illustrer
-            return (
-                f"⚠️ *Article créé mais QA échoué à l'étape '{qa_step}'*\n\n"
-                f"📰 *{titre}*\n"
-                f"slug={slug}\n"
-                f"❌ {qa_error}\n\n"
-                f"🔧 /journal/{slug}"
-            )
-
-        staging_url = qa["staging_url"]
-        dep_id      = qa["deployment_id"]
-        log.info(f"framer.rediger: QA ✅ dep={dep_id} url={staging_url}")
+        # ── 5. Terminé — pas de QA/publish ici (illustrer fait publish après images) ──
+        img_count = len([f for f in IMAGE_FIELDS if field_data.get(FIELD_MAP[f]["id"])])
+        log.info(f"framer.rediger: ✅ article créé — slug={slug} fields={len(field_data)}")
 
         return (
-            f"✅ *Article publié et vérifié !*\n\n"
+            f"✅ *Article créé dans Framer*\n\n"
             f"📰 *{titre}*\n"
-            f"📋 {len(field_data)} champs · 🖼️ {img_count} images ({img_src})\n"
-            f"🚀 Deployment: `{dep_id}`\n\n"
-            f"👁 Staging (login Framer requis) :\n{staging_url}\n\n"
-            f"🎨 *Ajouter les images IA :* `/framer illustrer {slug}`"
+            f"📋 {len(field_data)} champs · 🖼️ {img_count} images ({img_source})\n"
+            f"/journal/{slug}"
         )
 
     async def liste(self, context: dict | None = None) -> str:
