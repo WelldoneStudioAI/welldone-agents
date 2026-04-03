@@ -178,8 +178,8 @@ class BlogPipelineAgent(BaseAgent):
                 )
 
             except asyncio.TimeoutError:
-                log.error(f"blog_pipeline [{attempt}]: étape 1 TIMEOUT (120s)")
-                article_result = {"erreur": "timeout rédaction 120s"}
+                log.error(f"blog_pipeline [{attempt}]: étape 1 TIMEOUT (200s)")
+                article_result = {"erreur": "timeout rédaction 200s"}
             except PipelineBudgetError as e:
                 log.error(f"blog_pipeline [{attempt}]: BUDGET ÉPUISÉ: {e}")
                 await notify(
