@@ -153,6 +153,12 @@ class BlogPipelineAgent(BaseAgent):
                 log.info(f"blog_pipeline: slug extrait = {actual_slug!r}")
             else:
                 log.warning("blog_pipeline: slug non trouvé dans la réponse rédiger")
+
+            # Lire le contenu réel depuis le cache MAINTENANT (avant qu'illustrer ne le supprime)
+            from agents.framer import _article_cache
+            _cached_qa = _article_cache.get(actual_slug, {}) if actual_slug else {}
+            _cached_article = _cached_qa.get("article", {})
+
             budget.sync_tokens()
             log.info(f"blog_pipeline: étape 1 OK — tokens={budget.used_tokens}")
             await notify(
@@ -219,19 +225,17 @@ class BlogPipelineAgent(BaseAgent):
         try:
             budget.check()
 
-            # Utiliser le contenu réel depuis le cache (pas le message de confirmation)
-            from agents.framer import _article_cache
-            cached = _article_cache.get(actual_slug, {}) if actual_slug else {}
-            cached_article = cached.get("article", {})
-            titre = cached_article.get("Title", "") or _extract_titre(article_result.get("raw", ""), sujet)
+            # Utiliser le contenu réel capturé avant illustrer (avant le pop du cache)
+            titre = _cached_article.get("Title", "") or _extract_titre(article_result.get("raw", ""), sujet)
 
-            # Assembler un extrait du contenu réel de l'article
-            if cached_article:
+            if _cached_article:
+                # Assembler un extrait depuis les vrais champs de l'article Claude
                 parts = []
-                for field in ("Heading1-Text", "Heading2-Text", "Heading3-Text"):
-                    val = cached_article.get(field, "")
-                    if val:
-                        parts.append(val[:200])
+                for field in ("Heading1-Text", "Heading1-Titre", "Heading2-Text",
+                              "Heading2-Titre", "Heading3-Text", "Sous-Titre (gauche)"):
+                    val = _cached_article.get(field, "")
+                    if val and len(val) > 20:
+                        parts.append(val[:250])
                 contenu_sample = " ".join(parts)[:800] or f"Article sur : {sujet}"
             else:
                 contenu_sample = f"Article sur : {sujet}"

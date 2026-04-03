@@ -901,16 +901,16 @@ class FramerAgent(BaseAgent):
 
         log.info(f"framer.illustrer: génération Gemini pour slug={slug}")
 
-        # Variations visuelles par position — écrans avec contenu de studio réel
+        # Variations de cadrage — compositions neutres, le visual_brief donne le contexte thématique
         _IMG_ANGLES = [
-            "wide hero shot, creative professional at desk, laptop screen showing brand identity logo design project, natural window light, editorial",
-            "close-up hands on iPad Pro, screen displaying a photography portfolio layout with editorial images, coffee cup beside, authentic candid",
-            "over-the-shoulder view, designer working, monitor showing a clean website mockup with real typography and photography, studio setting",
-            "flat lay overhead, open MacBook showing a branding project with color palettes and logo variations, notebook with handwritten notes beside",
-            "person reviewing printed brand guidelines spread on table, laptop open showing design software with a real project, warm studio light",
-            "side profile, creative professional on phone call, second screen visible showing a client presentation with photography and brand visuals",
-            "close-up laptop screen detail, Figma or design tool interface visible with a real web project, hands typing, shallow depth of field",
-            "two people in minimal meeting room, one showing iPad with portfolio images of completed branding projects, genuine conversation moment",
+            "wide hero shot, professional at desk with laptop open, natural window light from the side, editorial quality, authentic moment",
+            "close-up hands on laptop keyboard, screen softly visible, coffee cup beside, shallow depth of field, candid and real",
+            "over-the-shoulder view, person focused on their work on a large monitor, warm ambient studio light, genuine concentration",
+            "flat lay overhead, open laptop with notebook and pen beside, clean minimal desk surface, neutral tones, top-down editorial",
+            "person reviewing content on laptop screen, thoughtful expression, soft natural light, genuine and unposed, documentary style",
+            "side profile, professional absorbed in screen work, screen glow on face, dark neutral background, cinematic editorial",
+            "close-up of hands and keyboard with screen visible in background, bokeh effect, natural light, focused work session",
+            "two people in a brief authentic conversation, laptop between them on a minimal table, collaborative and candid moment",
         ]
 
         # Générer toutes les images en parallèle (timeout 60s/image)
