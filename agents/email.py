@@ -532,10 +532,10 @@ class EmailAgent(BaseAgent):
     schedules = [
         {
             "id":     "email_auto_trier",
-            "cron":   "0 * * * *",   # chaque heure
+            "cron":   "*/5 * * * *",   # toutes les 5 minutes — leads entrants
             "command": "auto_trier",
             "context": {},
-            "label":  "Triage email horaire",
+            "label":  "Triage email toutes les 5 min",
         }
     ]
 
@@ -1326,9 +1326,15 @@ class EmailAgent(BaseAgent):
 
     # Expéditeurs critiques qui ne doivent JAMAIS atterrir en Archives
     _CRITICAL_DOMAINS = (
+        # Réservations / rendez-vous
         "cal.com", "calendly.com", "acuityscheduling.com",
+        # Paiements / facturation
         "quickbooks.intuit.com", "stripe.com", "paypal.com",
+        # Contrats
         "docusign.com", "hellosign.com", "pandadoc.com",
+        # ⚡ Formulaires site web — TOUJOURS alerter (leads entrants)
+        "awelldone.studio", "awelldone.com",
+        "framer.com", "framerusercontent.com",
     )
 
     async def auto_trier(self, ctx: dict | None = None) -> str:

@@ -154,6 +154,46 @@ async def main():
             return {"status": "ok", "agents": list(REGISTRY.keys()),
                     "timestamp": _time.time()}
 
+        # ── Webhook formulaire site web ────────────────────────────────────────
+        # Framer (ou tout autre CMS) peut POST ici dès qu'un visiteur soumet
+        # le formulaire de contact → notification Telegram immédiate, 0 délai.
+        # Headers requis: Authorization: Bearer {FRAMER_FORM_SECRET}
+        # Body JSON: {name, email, message, phone?, source?}
+        class _FormPayload(BaseModel):
+            name:    str  = ""
+            email:   str  = ""
+            message: str  = ""
+            phone:   str  = ""
+            source:  str  = "site"
+
+        _FORM_SECRET = os.environ.get("FRAMER_FORM_SECRET", "")
+
+        @fastapi_app.post("/webhook/form")
+        async def _form_webhook(payload: _FormPayload,
+                                authorization: str = Header(default="")):
+            # Vérification token si configuré
+            if _FORM_SECRET:
+                token = authorization.replace("Bearer ", "").strip()
+                if token != _FORM_SECRET:
+                    raise HTTPException(status_code=401, detail="Invalid token")
+
+            from core.telegram_notifier import notify
+            lines = [
+                "🔥 *NOUVEAU LEAD — Formulaire site*",
+                f"👤 *{payload.name or 'Inconnu'}*",
+            ]
+            if payload.email:
+                lines.append(f"📧 {payload.email}")
+            if payload.phone:
+                lines.append(f"📞 {payload.phone}")
+            if payload.message:
+                lines.append(f"\n💬 _{payload.message[:300]}_")
+            if payload.source:
+                lines.append(f"\n🌐 Source: {payload.source}")
+            await notify("\n".join(lines))
+            log.info(f"webhook/form: lead reçu de {payload.email} ({payload.source})")
+            return {"status": "ok", "notified": True}
+
         @fastapi_app.get("/paperclip/agents")
         async def _paperclip_agents():
             return {"slugs": list(_SLUG_MAP.keys())}
