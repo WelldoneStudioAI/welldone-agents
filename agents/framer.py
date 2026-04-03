@@ -554,36 +554,33 @@ async def _get_portfolio_images(sector: str, max_images: int = 8) -> list[dict]:
 
 async def _generate_image_gemini(visual_context: str) -> bytes | None:
     """
-    Génère une image via Gemini Imagen 3 → retourne les bytes PNG.
+    Génère une image via Gemini Imagen 4 → retourne les bytes PNG.
     Utilise l'esthétique Welldone Studio : minimaliste, tons neutres, lumière naturelle.
     """
     if not GEMINI_API_KEY:
-        return None
-    try:
-        from google import genai
-        from google.genai import types as gtypes
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        prompt = (
-            "Welldone Studio aesthetic: minimalist, neutral tones, natural light, "
-            "premium textures, editorial photography style, no text, no watermarks, "
-            "no logos, commercial photography quality. "
-            f"Project context: {visual_context}"
-        )
-        response = await asyncio.to_thread(
-            client.models.generate_images,
-            model="imagen-4.0-generate-001",
-            prompt=prompt,
-            config=gtypes.GenerateImagesConfig(
-                number_of_images=1,
-                aspect_ratio="16:9",
-                safety_filter_level="BLOCK_LOW_AND_ABOVE",
-                person_generation="ALLOW_ADULT",
-            ),
-        )
-        if response.generated_images:
-            return response.generated_images[0].image.image_bytes
-    except Exception as e:
-        log.warning(f"Gemini image generation error: {e}")
+        raise RuntimeError("GEMINI_API_KEY manquant dans Railway")
+    from google import genai
+    from google.genai import types as gtypes
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    prompt = (
+        "Welldone Studio aesthetic: minimalist, neutral tones, natural light, "
+        "premium textures, editorial photography style, no text, no watermarks, "
+        "no logos, commercial photography quality. "
+        f"Project context: {visual_context}"
+    )
+    response = await asyncio.to_thread(
+        client.models.generate_images,
+        model="imagen-4.0-generate-001",
+        prompt=prompt,
+        config=gtypes.GenerateImagesConfig(
+            number_of_images=1,
+            aspect_ratio="16:9",
+            safety_filter_level="BLOCK_LOW_AND_ABOVE",
+            person_generation="ALLOW_ADULT",
+        ),
+    )
+    if response.generated_images:
+        return response.generated_images[0].image.image_bytes
     return None
 
 
@@ -622,18 +619,18 @@ async def _generate_and_upload_image(visual_context: str, public_id: str) -> dic
     """
     Pipeline complet : Gemini → bytes → GCS → URL permanente.
     Retourne {src, alt, credit} ou None si échec.
-    Timeout dur de 45s pour ne pas bloquer le pipeline global.
+    Timeout dur de 60s pour ne pas bloquer le pipeline global.
     """
     try:
-        img_bytes = await asyncio.wait_for(_generate_image_gemini(visual_context), timeout=45)
+        img_bytes = await asyncio.wait_for(_generate_image_gemini(visual_context), timeout=60)
     except asyncio.TimeoutError:
-        log.warning(f"Gemini timeout (45s) pour: {visual_context[:60]}")
-        return None
+        log.warning(f"Gemini timeout (60s) pour: {visual_context[:60]}")
+        raise RuntimeError("Timeout Gemini (60s)")
     if not img_bytes:
         return None
     url = await asyncio.to_thread(_upload_to_gcs, img_bytes, public_id)
     if not url:
-        return None
+        raise RuntimeError("GCS upload échoué (URL vide)")
     return {
         "src":    url,
         "alt":    visual_context[:120],
@@ -864,13 +861,24 @@ class FramerAgent(BaseAgent):
             pid     = f"blog/{_make_slug(slug[:40])}-img{i+1}-{ts}.png"
             tasks.append(_generate_and_upload_image(ctx_img, pid))
 
-        gemini_images = list(await asyncio.gather(*tasks))
+        results_raw = await asyncio.gather(*tasks, return_exceptions=True)
+        gemini_images = []
+        first_error: str = ""
+        for r in results_raw:
+            if isinstance(r, Exception):
+                if not first_error:
+                    first_error = str(r)[:200]
+                    log.warning(f"framer.illustrer: erreur image: {first_error}")
+                gemini_images.append(None)
+            else:
+                gemini_images.append(r)
         n_ok = sum(1 for g in gemini_images if g)
         log.info(f"framer.illustrer: {n_ok}/{len(IMAGE_FIELDS)} images générées")
 
         if n_ok == 0:
+            err_detail = f"\nErreur : `{first_error}`" if first_error else ""
             return (
-                "⚠️ Gemini n'a généré aucune image (timeout ou erreur API).\n"
+                f"⚠️ Gemini n'a généré aucune image.{err_detail}\n"
                 "L'article Framer garde ses images Picsum actuelles."
             )
 
