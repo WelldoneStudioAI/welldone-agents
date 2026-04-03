@@ -69,14 +69,8 @@ async def main():
     # 1. Découverte des agents
     agents = discover_agents()
     from core.dispatcher import FAILED_AGENTS
-    import subprocess as _sp_boot
-    try:
-        _sha = _sp_boot.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            stderr=_sp_boot.DEVNULL, text=True
-        ).strip()
-    except Exception:
-        _sha = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "unknown")[:7]
+    import os as _os
+    _sha = _os.environ.get("RAILWAY_GIT_COMMIT_SHA", "local")[:7]
 
     log.info(f"[VALIDATION] commit={_sha}")
     log.info(f"[VALIDATION] agents_loaded={list(agents.keys())}")
@@ -172,7 +166,7 @@ async def main():
         # ── /healthz — preuve réelle de fonctionnement ─────────────────────────
         @fastapi_app.get("/healthz")
         async def _healthz():
-            import subprocess as _sp
+            import os as _hzos
             from core.dispatcher import REGISTRY, FAILED_AGENTS, discover_agents
             if not REGISTRY:
                 discover_agents()
@@ -182,16 +176,10 @@ async def main():
                 "TELEGRAM_BOT_TOKEN", "ANTHROPIC_API_KEY",
                 "FRAMER_API_KEY", "TELEGRAM_ALLOWED_USER_ID",
             ]
-            missing_vars = [v for v in _REQUIRED_VARS if not os.environ.get(v)]
+            missing_vars = [v for v in _REQUIRED_VARS if not _hzos.environ.get(v)]
 
-            # Commit SHA
-            try:
-                sha = _sp.check_output(
-                    ["git", "rev-parse", "--short", "HEAD"],
-                    stderr=_sp.DEVNULL, text=True
-                ).strip()
-            except Exception:
-                sha = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "unknown")[:7]
+            # Commit SHA depuis Railway (git non dispo dans le conteneur)
+            sha = _hzos.environ.get("RAILWAY_GIT_COMMIT_SHA", "local")[:7]
 
             agents_ok     = list(REGISTRY.keys())
             agents_failed = {k: v[:120] for k, v in FAILED_AGENTS.items()}
