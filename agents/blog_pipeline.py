@@ -161,7 +161,7 @@ class BlogPipelineAgent(BaseAgent):
 
                 raw1 = await asyncio.wait_for(
                     dispatch("framer", "rédiger", ctx_rediger),
-                    timeout=120,  # +30s par rapport à avant pour laisser le temps au retry
+                    timeout=200,  # rédiger + QA verify peut prendre jusqu'à 180s
                 )
                 article_result = {"raw": raw1, "sujet": sujet}
                 etape1_ok = True
