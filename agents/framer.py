@@ -372,7 +372,14 @@ async def framer_add_item(slug: str, field_data: dict) -> dict:
 
     if not res["ok"]:
         return res
-    return {"ok": True, "message": "Article créé dans Framer CMS", "result": res["data"]}
+    # Extraire le slug réellement créé (peut avoir un suffixe si doublon)
+    created_data = res["data"]
+    actual_slug = slug  # fallback
+    if isinstance(created_data, list) and created_data:
+        actual_slug = created_data[0].get("slug", slug)
+    elif isinstance(created_data, dict):
+        actual_slug = created_data.get("slug", slug)
+    return {"ok": True, "message": "Article créé dans Framer CMS", "result": created_data, "slug": actual_slug}
 
 
 async def framer_publish_staging() -> dict:
@@ -984,17 +991,23 @@ class FramerAgent(BaseAgent):
         if item_id:
             await framer_delete_item(item_id)
             log.info(f"framer.illustrer: ancien item supprimé ({item_id})")
+            await asyncio.sleep(3)  # Framer doit propager la suppression avant de réutiliser le slug
 
         new_res = await framer_add_item(slug, field_data)
         if not new_res.get("ok"):
             return f"❌ Erreur recréation Framer: {new_res.get('error', 'Inconnu')}"
+
+        # Utiliser le slug réellement créé (peut différer si doublon résiduel)
+        final_slug = new_res.get("slug", slug)
+        if final_slug != slug:
+            log.warning(f"framer.illustrer: slug final={final_slug!r} (différent de {slug!r})")
 
         # Retirer du cache (phase terminée)
         _article_cache.pop(slug, None)
 
         # QA bloquant — vérifie slug + publish + deployment ID
         editor_url = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
-        qa = await framer_qa_verify(slug)
+        qa = await framer_qa_verify(final_slug)
         if not qa.get("ok"):
             return (
                 f"⚠️ *Images ajoutées mais QA échoué (étape: {qa.get('step')})* \n\n"
@@ -1003,14 +1016,14 @@ class FramerAgent(BaseAgent):
                 f"🔧 [Ouvrir l'éditeur Framer]({editor_url})"
             )
 
-        staging_url = qa["staging_url"]
-        dep_id      = qa["deployment_id"]
+        staging_base = (FRAMER_STAGING_URL or "").rstrip("/")
+        staging_url  = f"{staging_base}/journal/{final_slug}" if staging_base else qa.get("staging_url", "")
+        dep_id       = qa["deployment_id"]
         return (
             f"🎨 *Images IA ajoutées et publiées !*\n\n"
             f"📰 *{titre}*\n"
-            f"🖼️ {n_ok}/{len(IMAGE_FIELDS)} images Gemini\n"
-            f"🚀 Deployment: `{dep_id}`\n\n"
-            f"👁 Staging (login Framer requis) :\n{staging_url}"
+            f"🖼️ {n_ok}/{len(IMAGE_FIELDS)} images Gemini\n\n"
+            f"👁 {staging_url}"
         )
 
     async def collections(self, context: dict | None = None) -> str:

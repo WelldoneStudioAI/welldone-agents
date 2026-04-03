@@ -299,13 +299,18 @@ class BlogPipelineAgent(BaseAgent):
         score_emoji = "🟢" if score >= 8 else "🟡"
         retry_note = f" _(corrigé en {attempt} tentative{'s' if attempt > 1 else ''})_" if attempt > 1 else ""
 
-        slug = _extract_slug(article_result.get("raw", ""))
-        from config import FRAMER_STAGING_URL
-        if slug and FRAMER_STAGING_URL:
-            lien_display = f"[Voir l'article →]({FRAMER_STAGING_URL.rstrip('/')}/journal/{slug})"
-        else:
-            raw_lien = _extract_lien(article_result.get("raw", ""))
-            lien_display = raw_lien if raw_lien else ""
+        # Prioriser l'URL de illustrer (contient le slug final après delete+recreate)
+        lien_display = ""
+        img_raw = images_result.get("raw", "")
+        if img_raw:
+            img_lien = _extract_lien(img_raw)
+            if img_lien:
+                lien_display = f"[Voir l'article →]({img_lien})"
+        if not lien_display:
+            slug = _extract_slug(article_result.get("raw", ""))
+            from config import FRAMER_STAGING_URL
+            if slug and FRAMER_STAGING_URL:
+                lien_display = f"[Voir l'article →]({FRAMER_STAGING_URL.rstrip('/')}/journal/{slug})"
 
         lines = [
             f"✅ *Article publié et validé !*{retry_note}",
