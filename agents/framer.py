@@ -575,8 +575,6 @@ async def _generate_image_gemini(visual_context: str) -> bytes | None:
         config=gtypes.GenerateImagesConfig(
             number_of_images=1,
             aspect_ratio="16:9",
-            safety_filter_level="BLOCK_LOW_AND_ABOVE",
-            person_generation="ALLOW_ADULT",
         ),
     )
     if response.generated_images:
