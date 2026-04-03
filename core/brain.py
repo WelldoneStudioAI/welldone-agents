@@ -33,7 +33,7 @@ FORMAT RÉPONSE — 2 options possibles :
 
 Option A — tâche unique (défaut) :
 {
-  "agent": "gmail|calendar|notion|analytics|qbo|veille|voyage|email|blog|framer|chat",
+  "agent": "gmail|calendar|notion|analytics|qbo|veille|voyage|email|blog|framer|reviseur|chat",
   "command": "sous-commande spécifique",
   "context": {paramètres nécessaires},
   "reply": "message court confirmant ce que tu vas faire (1 phrase max)"
@@ -73,6 +73,15 @@ Agents disponibles et leurs responsabilités :
   → Utilise quand JP dit "génère un article complet", "pipeline blog", "/blog rédige", "article complet avec images"
   → context doit avoir: sujet (str — l'idée ou le sujet complet de l'article)
 - framer: {rédiger, liste, supprimer, collections, publier} → articles de blog Framer CMS (awelldone.studio/journal/)
+- reviseur: {collections, analyser, valider, réviser, appliquer, éditer, liste} → révision chirurgicale du contenu CMS Framer (toutes collections)
+  → "analyser" = analyse le corpus d'une collection et propose un guide de structure éditorial (validé par JP avant utilisation)
+  → "valider" = confirme ou ajuste le guide proposé — context: collection (str), ajustements? (str)
+  → "réviser --collection <id> --slug <slug>" = compare un item vs le guide → liste numérotée de recommandations
+  → "appliquer --collection <id> --slug <slug> --numeros \"1,3\"" = applique les recs choisies (patch chirurgical — jamais régénération complète)
+  → "éditer --collection <id> --slug <slug> --champ <champ> --valeur <val>" = modif directe d'un champ (0 token Claude)
+  → "liste --collection <id>" = liste les items avec recs en attente
+  → Si collection non précisée → affiche un clavier de sélection (ne pas deviner la collection)
+  → Utilise quand JP dit "révise cet article", "améliore cette page", "recommandations de contenu", "audit de page"
 - layout_guardian: {inspecter, juge, rapport} → Framer Layout Guardian — détecte les problèmes de mise en page (overflow, responsive, alignement) et propose des corrections minimales sans redesign. Utilise quand JP dit "inspecte ma page", "problème layout", "responsive cassé", "vérifie le design", "audit UI"
 - email: {trier, lire, chercher, résumer, rédiger, envoyer, filtres, créer_filtre, appliquer_filtres, dossiers} → boîte WHC jptanguay@awelldone.com
 - chat: {respond} → conversation générale, rédaction, brainstorm
@@ -178,10 +187,29 @@ async def parse_intent(
 
         # Format multi-tâches
         if "tasks" in data:
-            tasks = data.get("tasks", [])
+            raw_tasks = data.get("tasks", [])
+            # Valider chaque tâche : doit avoir au moins "agent" et "command"
+            valid_tasks = [
+                t for t in raw_tasks
+                if isinstance(t, dict) and t.get("agent") and t.get("command")
+            ]
+            dropped = len(raw_tasks) - len(valid_tasks)
+            if dropped:
+                log.warning(f"brain: {dropped} tâche(s) invalide(s) ignorées (agent ou command manquant)")
+            # Enforcer le max 5 tâches déclaré dans le system prompt
+            if len(valid_tasks) > 5:
+                log.warning(
+                    f"brain: multi-tasks trop nombreuses ({len(valid_tasks)}) "
+                    "→ tronquées à 5 (max autorisé)"
+                )
+                valid_tasks = valid_tasks[:5]
+            # Liste vide après filtrage → fallback chat (évite dispatch silencieux)
+            if not valid_tasks:
+                log.warning("brain: multi-tasks vide ou entièrement invalide → fallback chat")
+                return "chat", "respond", {"message": message}, ""
             reply = data.get("reply", "")
-            log.info(f"brain: multi-tasks n={len(tasks)} reply={reply[:50]}")
-            return {"tasks": tasks, "reply": reply}
+            log.info(f"brain: multi-tasks n={len(valid_tasks)} (reçues={len(raw_tasks)}) reply={reply[:50]}")
+            return {"tasks": valid_tasks, "reply": reply}
 
         # Format tâche unique (défaut)
         agent   = data.get("agent", "chat")

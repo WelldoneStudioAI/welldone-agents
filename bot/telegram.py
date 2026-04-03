@@ -20,6 +20,12 @@ from agents.qbo import (
 )
 
 from agents.qbo import QBOAgent as _QBOAgent
+from agents.reviseur import (
+    NEEDS_COLLECTION as _REVISEUR_NEEDS_COLLECTION,
+    get_session as _rev_get_session,
+    clear_session as _rev_clear_session,
+    get_collection_keyboard_data as _rev_collections,
+)
 
 # Signaux retournés par qbo.create()
 _QBO_NEEDS_CONFIRMATION = _QBOAgent.NEEDS_CONFIRMATION
@@ -123,6 +129,40 @@ async def _show_qbo_preview(update: Update, user_id: int):
     )
 
 
+# ── Collection picker reviseur ────────────────────────────────────────────────
+
+async def _show_reviseur_collection_picker(update, user_id: int, command: str):
+    """Affiche le clavier inline de sélection de collection pour l'agent reviseur."""
+    cols = _rev_collections(user_id)
+    if not cols:
+        await update.effective_message.reply_text(
+            "❌ Aucune collection Framer disponible."
+        )
+        return
+
+    # Build rows of 2 buttons
+    rows = []
+    row  = []
+    for c in cols:
+        cid  = c.get("id", "")
+        name = c.get("name", cid)
+        cnt  = c.get("count", "")
+        label = f"{name} ({cnt})" if cnt else name
+        row.append(InlineKeyboardButton(label, callback_data=f"rev_col_{cid}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+
+    keyboard = InlineKeyboardMarkup(rows)
+    await update.effective_message.reply_text(
+        f"📦 *Quelle collection pour `{command}` ?*",
+        parse_mode="Markdown",
+        reply_markup=keyboard,
+    )
+
+
 # ── Commandes slash ────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -212,8 +252,17 @@ async def cmd_agent(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ Agent `{agent_name}` introuvable")
         return
 
+    # Inject user_id for agents that need it (reviseur, qbo)
+    ctx["_user_id"] = update.effective_user.id
+
     await update.message.reply_text(f"⏳ /{agent_name} {command}...")
     result = await dispatch(agent_name, command, ctx or None)
+
+    # Reviseur: collection picker
+    if result == _REVISEUR_NEEDS_COLLECTION:
+        await _show_reviseur_collection_picker(update, update.effective_user.id, command)
+        return
+
     await _send_md(update, result)
 
 
@@ -307,7 +356,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(progress_msg, parse_mode="Markdown")
 
     # Agents lents — maintenir l'indicateur de frappe (···)
-    SLOW_AGENTS = {"voyage", "framer", "veille", "analytics"}
+    SLOW_AGENTS = {"voyage", "framer", "veille", "analytics", "reviseur"}
     if agent_name in SLOW_AGENTS:
         import asyncio as _asyncio
 
@@ -324,6 +373,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         typing_task = _asyncio.create_task(_keep_typing())
     else:
         typing_task = None
+
+    # Injecter user_id pour les agents qui en ont besoin
+    ctx["_user_id"] = user_id
 
     # Cas spécial QBO create → flux preview
     if agent_name == "qbo" and command == "create":
@@ -404,6 +456,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not result:
         result = "❌ Aucune réponse reçue de l'agent."
 
+    # Reviseur: collection picker
+    if result == _REVISEUR_NEEDS_COLLECTION:
+        await _show_reviseur_collection_picker(update, user_id, command)
+        return
+
     _add_to_history(user_id, "assistant", result)
     await _send_md(update, result)
 
@@ -455,6 +512,40 @@ async def _handle_callback_inner(update, context, query, user_id, data):
     elif data.startswith("qbo_edit_amount_"):
         context.user_data["awaiting_edit"] = "amount"
         await query.message.reply_text("✏️ Tape le nouveau montant (ex: 3500) :")
+
+    # ── Reviseur : sélection de collection ───────────────────────────────────
+    elif data.startswith("rev_col_"):
+        col_id = data[len("rev_col_"):]
+        sess   = _rev_get_session(user_id)
+        if not sess:
+            await query.edit_message_text("❌ Session expirée. Recommence la commande.")
+            return
+
+        cmd = sess["command"]
+        ctx = dict(sess["ctx"])
+        ctx["collection"] = col_id
+        _rev_clear_session(user_id)
+
+        if cmd in ("réviser", "appliquer") and not ctx.get("slug"):
+            # Need slug — show item list so JP can pick
+            await query.edit_message_text("⏳ Chargement des items...")
+            result = await dispatch("reviseur", "liste", {"collection": col_id, "_user_id": user_id})
+            text = result + "\n\n_Relance avec `--slug <slug>` pour continuer._"
+            try:
+                await query.edit_message_text(text, parse_mode="Markdown")
+            except Exception:
+                await query.edit_message_text(result)
+        else:
+            await query.edit_message_text(f"⏳ /{cmd} en cours...")
+            result = await dispatch("reviseur", cmd, ctx)
+            if result == _REVISEUR_NEEDS_COLLECTION:
+                # Edge case: command still needs collection (shouldn't happen)
+                await query.edit_message_text("❌ Erreur : collection non reconnue.")
+                return
+            try:
+                await query.edit_message_text(result, parse_mode="Markdown")
+            except Exception:
+                await query.edit_message_text(result)
 
     # ── Sélection service (pills) ─────────────────────────────────────────────
     elif data.startswith("svc_"):
