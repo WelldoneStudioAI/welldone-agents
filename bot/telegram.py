@@ -80,13 +80,29 @@ def _is_allowed(update: Update) -> bool:
 
 
 async def _send(update: Update, text: str):
-    """Envoie en Markdown avec fallback plain text si parse error (underscore, backtick non fermé, etc.)."""
-    chunks = [text[i:i+4000] for i in range(0, len(text), 4000)] if len(text) > 4096 else [text]
+    """Envoie en Markdown avec fallback plain text. Découpe les longs messages en chunks."""
+    # Découper en chunks de 3800 chars (marge pour les entités Markdown en fin de chunk)
+    if len(text) <= 3800:
+        chunks = [text]
+    else:
+        chunks = []
+        while text:
+            # Couper sur un saut de ligne propre si possible
+            cut = 3800
+            if len(text) > cut:
+                nl = text.rfind("\n", 0, cut)
+                cut = nl if nl > 2000 else cut
+            chunks.append(text[:cut])
+            text = text[cut:]
+
     for chunk in chunks:
         try:
             await update.effective_message.reply_text(chunk, parse_mode="Markdown")
         except Exception:
-            await update.effective_message.reply_text(chunk)
+            try:
+                await update.effective_message.reply_text(chunk)
+            except Exception:
+                pass  # chunk trop long ou autre erreur non-fatale
 
 
 # Alias pour la lisibilité

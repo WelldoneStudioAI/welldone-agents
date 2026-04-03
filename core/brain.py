@@ -242,10 +242,10 @@ Ton ton : direct, concis, professionnel. En français québécois naturel."""
         resp = await safe_claude_call(
             get_client(),
             model=CLAUDE_MODEL,
-            max_tokens=1500,
+            max_tokens=4000,
             system=sys_prompt,
             messages=history[-18:] + [{"role": "user", "content": message}],
-            timeout_s=60,
+            timeout_s=90,
             budget=budget,
             agent_name="brain.chat",
         )
