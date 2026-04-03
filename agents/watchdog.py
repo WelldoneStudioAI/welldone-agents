@@ -82,7 +82,13 @@ class WatchdogAgent(BaseAgent):
             icon = "✅" if ok else "❌"
             lines.append(f"{icon} {name}" + (f" — {detail}" if not ok else ""))
 
-        lines.append(f"\n_{ok_count}/{len(results)} services opérationnels_")
+        import subprocess
+        try:
+            commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"],
+                                             stderr=subprocess.DEVNULL).decode().strip()
+        except Exception:
+            commit = "inconnu"
+        lines.append(f"\n_{ok_count}/{len(results)} services opérationnels — commit `{commit}`_")
 
         summary = "\n".join(lines)
         log.info(f"watchdog.check: {ok_count}/{len(results)} OK")
@@ -104,7 +110,7 @@ class WatchdogAgent(BaseAgent):
         port = int(os.environ.get("WHC_IMAP_PORT", "993"))
         user = os.environ.get("WHC_EMAIL", "")
         pwd  = os.environ.get("WHC_PASSWORD", "")
-        return await asyncio.get_event_loop().run_in_executor(
+        return await asyncio.get_running_loop().run_in_executor(
             None, lambda: self._test_imap(name, host, port, user, pwd)
         )
 
@@ -116,13 +122,14 @@ class WatchdogAgent(BaseAgent):
         pwd  = os.environ.get("HST_PASSWORD", "")
         if not pwd:
             return (name, False, "HST_PASSWORD manquant dans env")
-        return await asyncio.get_event_loop().run_in_executor(
+        return await asyncio.get_running_loop().run_in_executor(
             None, lambda: self._test_imap(name, host, port, user, pwd)
         )
 
     async def _check_ga4(self) -> tuple[str, bool, str]:
         name = "GA4"
         def _test():
+            tmp_path = None
             try:
                 import base64
                 sa_b64 = os.environ.get("GOOGLE_SA_JSON_B64", "")
@@ -132,11 +139,12 @@ class WatchdogAgent(BaseAgent):
                 sa_json = json.loads(base64.b64decode(sa_b64))
                 f = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
                 json.dump(sa_json, f); f.close()
+                tmp_path = f.name
                 from google.oauth2 import service_account
                 from google.analytics.data_v1beta import BetaAnalyticsDataClient
                 from google.analytics.data_v1beta.types import RunReportRequest, DateRange, Dimension, Metric
                 creds = service_account.Credentials.from_service_account_file(
-                    f.name, scopes=["https://www.googleapis.com/auth/analytics.readonly"]
+                    tmp_path, scopes=["https://www.googleapis.com/auth/analytics.readonly"]
                 )
                 client = BetaAnalyticsDataClient(credentials=creds)
                 ga4_id = os.environ.get("GA4_PROPERTY_ID", "522467276")
@@ -147,11 +155,17 @@ class WatchdogAgent(BaseAgent):
                     date_ranges=[DateRange(start_date="yesterday", end_date="today")],
                     limit=1,
                 ))
-                os.unlink(f.name)
                 return (name, True, "")
             except Exception as e:
                 return (name, False, str(e)[:100])
-        return await asyncio.get_event_loop().run_in_executor(None, _test)
+            finally:
+                # Nettoyage garanti même si une exception est levée
+                if tmp_path:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+        return await asyncio.get_running_loop().run_in_executor(None, _test)
 
     async def _check_anthropic(self) -> tuple[str, bool, str]:
         name = "Anthropic"
@@ -173,7 +187,7 @@ class WatchdogAgent(BaseAgent):
                 return (name, True, "")
             except Exception as e:
                 return (name, False, str(e)[:100])
-        return await asyncio.get_event_loop().run_in_executor(None, _test)
+        return await asyncio.get_running_loop().run_in_executor(None, _test)
 
     async def _check_telegram(self) -> tuple[str, bool, str]:
         name = "Telegram"
@@ -194,7 +208,7 @@ class WatchdogAgent(BaseAgent):
                 return (name, False, f"getMe returned ok=false")
             except Exception as e:
                 return (name, False, str(e)[:100])
-        return await asyncio.get_event_loop().run_in_executor(None, _test)
+        return await asyncio.get_running_loop().run_in_executor(None, _test)
 
     async def _check_notion(self) -> tuple[str, bool, str]:
         name = "Notion"
@@ -218,7 +232,7 @@ class WatchdogAgent(BaseAgent):
                 return (name, True, "")
             except Exception as e:
                 return (name, False, str(e)[:100])
-        return await asyncio.get_event_loop().run_in_executor(None, _test)
+        return await asyncio.get_running_loop().run_in_executor(None, _test)
 
     # ── Helper IMAP ───────────────────────────────────────────────────────────
 
