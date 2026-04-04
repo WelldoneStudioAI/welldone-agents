@@ -70,9 +70,12 @@ Agents disponibles et leurs responsabilités :
 - voyage: {search} → recherche de vols optimaux (GPT-4o + Google Flights)
 - blog: {rédiger} → pipeline blog complet fire-and-forget : rédaction + images + scoring qualité automatique
   → "blog rédiger <sujet>" lance les 3 étapes en arrière-plan et notifie JP quand terminé
-  → Utilise quand JP dit "génère un article complet", "pipeline blog", "/blog rédige", "article complet avec images"
+  → RÈGLE PRIORITAIRE : toute demande naturelle d'article de blog = blog.rédiger par défaut
+  → Utilise quand JP dit "rédige un article de blog", "écris un article", "crée un article pour le site",
+    "génère un article complet", "pipeline blog", "/blog rédige", "article complet avec images",
+    "article pour le journal", "article sur X", ou toute variation naturelle
   → context doit avoir: sujet (str — l'idée ou le sujet complet de l'article)
-- framer: {rédiger, liste, supprimer, collections, publier} → articles de blog Framer CMS (awelldone.studio/journal/)
+- framer: {rédiger, liste, supprimer, collections, publier} → accès direct au CMS Framer (articles, collections)
 - reviseur: {collections, analyser, valider, réviser, appliquer, éditer, liste} → révision chirurgicale du contenu CMS Framer (toutes collections)
   → "analyser" = analyse le corpus d'une collection et propose un guide de structure éditorial (validé par JP avant utilisation)
   → "valider" = confirme ou ajuste le guide proposé — context: collection (str), ajustements? (str)
@@ -128,8 +131,9 @@ Pour "list" qbo, context peut avoir: status ("unpaid"|"overdue"|"all"), limit (i
 Pour "scan_invoices" gmail, context peut avoir: days (int, défaut 7) pour la période de recherche
 Pour "search" voyage, context doit avoir: query (description naturelle du voyage, ex: "YUL SXM 15 mai retour 22 mai")
 Pour "rédiger" framer, context doit avoir: sujet (str — idée ou sujet complet de l'article)
-  - Ex: "rédige un article sur la valeur de la photo pro pour une PME" → framer.rédiger {sujet: "..."}
-  - Si JP mentionne "article de blog", "rédige pour le site", "contenu Framer", "journal" → utilise framer
+  - Ex: "ajoute une entrée CMS Framer sur X" → framer.rédiger {sujet: "..."}
+  - Utilise framer.rédiger UNIQUEMENT si JP mentionne explicitement "Framer", "CMS", "entrée collection", "modifie Framer"
+  - JAMAIS pour une demande naturelle d'article de blog (→ utilise blog.rédiger à la place)
   - Le sujet doit être le plus complet possible (reprendre la demande entière de JP)
 Pour "liste" framer → liste les articles existants (pas de context requis)
 Pour "supprimer" framer → context doit avoir: id (str — l'ID de l'article affiché par /framer liste)

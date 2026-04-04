@@ -340,8 +340,12 @@ class BlogPipelineAgent(BaseAgent):
         retry_note = f" _(corrigé en {attempt} tentative{'s' if attempt > 1 else ''})_" if attempt > 1 else ""
 
         # URL staging (framer.app) — retournée par illustrer()
+        import re as _re_stage
         staging_lien = ""
         img_raw = images_result.get("raw", "")
+        # Extraire le flag staging_url_verified encodé dans le retour de illustrer
+        _sv_match = _re_stage.search(r"_staging_url_verified:(True|False)_", img_raw)
+        staging_url_verified = (_sv_match.group(1) == "True") if _sv_match else False
         if img_raw:
             staging_lien = _extract_lien(img_raw)
         if not staging_lien and slug:
@@ -380,6 +384,11 @@ class BlogPipelineAgent(BaseAgent):
         except Exception as _ne:
             log.warning(f"blog_pipeline: Notion pipeline_create skip ({_ne})")
 
+        if staging_url_verified:
+            staging_label = f"👁 [Réviser en staging]({staging_lien})"
+        else:
+            staging_label = f"👁 [Staging]({staging_lien}) _(accessible dans ~2 min)_"
+
         lines = [
             f"✅ *Article créé — prêt à réviser !*{retry_note}",
             f"📝 _{sujet[:100]}_",
@@ -387,7 +396,7 @@ class BlogPipelineAgent(BaseAgent):
             f"{score_emoji} Qualité : *{score}/10* — _{raison[:120]}_",
             f"{'✅' if images_ok else '⚠️'} Images",
             "",
-            f"👁 [Réviser en staging]({staging_lien})",
+            staging_label,
         ]
         if notion_url:
             lines.append(f"📋 [Voir dans Notion]({notion_url})")
@@ -403,7 +412,7 @@ class BlogPipelineAgent(BaseAgent):
                 pub_key = _register_pub_slug(slug)
                 keyboard = InlineKeyboardMarkup([[
                     InlineKeyboardButton(
-                        "🌐 Publier sur awelldone.com",
+                        "🌐 Publier le site",
                         callback_data=f"pub_{pub_key}",
                     )
                 ]])

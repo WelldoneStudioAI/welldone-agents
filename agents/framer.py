@@ -445,13 +445,30 @@ async def framer_qa_verify(slug: str) -> dict:
 
     staging_url = f"{staging_base}/journal/{slug}" if staging_base else ""
     await asyncio.sleep(20)  # laisser Framer terminer le rebuild staging
-    log.info(f"framer_qa_verify ✅ slug={slug} dep={dep_id} found={found} url={staging_url}")
+
+    # Vérifier que l'URL staging est réellement accessible (retry 3×15s = 65s max)
+    staging_url_verified = False
+    if staging_url:
+        for _i in range(3):
+            try:
+                code = urllib.request.urlopen(staging_url, timeout=10).getcode()
+                if code == 200:
+                    staging_url_verified = True
+                    break
+            except Exception:
+                pass
+            if _i < 2:
+                await asyncio.sleep(15)
+        log.info(f"framer_qa_verify: staging_url_verified={staging_url_verified} url={staging_url!r}")
+
+    log.info(f"framer_qa_verify ✅ slug={slug} dep={dep_id} found={found} verified={staging_url_verified} url={staging_url}")
     return {
-        "ok":            True,
-        "slug":          slug,
-        "deployment_id": dep_id,
-        "staging_url":   staging_url,
-        "slug_verified": found,
+        "ok":                  True,
+        "slug":                slug,
+        "deployment_id":       dep_id,
+        "staging_url":         staging_url,
+        "slug_verified":       found,
+        "staging_url_verified": staging_url_verified,
     }
 
 
@@ -1052,12 +1069,15 @@ class FramerAgent(BaseAgent):
         if not staging_url and FRAMER_STAGING_URL:
             staging_url = f"{FRAMER_STAGING_URL.rstrip('/')}/journal/{final_slug}"
 
+        staging_verified = qa.get("staging_url_verified", False)
+        staging_status = "✅ URL vérifiée" if staging_verified else "⚠️ URL en cours de déploiement"
         return (
             f"🎨 *Images IA ajoutées — article prêt !*\n\n"
             f"📰 *{titre}*\n"
             f"🖼️ {n_ok}/{len(IMAGE_FIELDS)} images Gemini\n\n"
             f"👁 [Réviser en staging]({staging_url})\n"
-            f"_Clique le bouton 🌐 pour publier sur awelldone.com_"
+            f"_{staging_status}_\n"
+            f"_staging_url_verified:{staging_verified}_"
         )
 
     async def collections(self, context: dict | None = None) -> str:
@@ -1325,16 +1345,17 @@ class FramerAgent(BaseAgent):
                 return f"❌ Erreur publication : {err[:200]}"
 
         if slug:
-            pub_url = f"https://awelldone.com/journal/{slug}"
+            staging = FRAMER_STAGING_URL.rstrip("/") if FRAMER_STAGING_URL else ""
+            pub_url = f"{staging}/journal/{slug}" if staging else f"/journal/{slug}"
             return (
-                f"🚀 *Article publié sur awelldone.com !*\n\n"
+                f"🚀 *Site publié !*\n\n"
                 f"🔗 [Voir l'article]({pub_url})\n"
                 f"_Le déploiement peut prendre 1-2 minutes._"
             )
         else:
             editor_url = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
             return (
-                f"🚀 *Site publié sur awelldone.com !*\n\n"
+                f"🚀 *Site Framer publié !*\n\n"
                 f"👉 [Ouvrir Framer Editor]({editor_url})\n"
                 f"_Le déploiement peut prendre 1-2 minutes._"
             )
