@@ -1033,7 +1033,13 @@ class FramerAgent(BaseAgent):
         # Retirer du cache (phase terminée)
         _article_cache.pop(slug, None)
 
-        # Construire staging URL directement (pas de publish auto → JP publie via bouton Telegram)
+        # Publish vers staging (nécessaire pour que l'article soit visible sur framer.app)
+        try:
+            await framer_publish_staging()
+            await asyncio.sleep(10)  # Laisser Framer reconstruire le staging
+        except Exception as _pe:
+            log.warning(f"framer.illustrer: publish staging échoué: {_pe}")
+
         staging_url = ""
         if FRAMER_STAGING_URL:
             staging_url = f"{FRAMER_STAGING_URL.rstrip('/')}/journal/{final_slug}"

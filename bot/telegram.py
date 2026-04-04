@@ -342,13 +342,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if isinstance(intent_result, dict) and "tasks" in intent_result:
         tasks  = intent_result["tasks"]
         reply  = intent_result.get("reply", f"Lancement de {len(tasks)} taches en parallele...")
-        tm = get_task_manager()
-        if tm is None:
-            await update.message.reply_text("TaskManager non disponible — relance le bot.")
-            return
-        confirm = await tm.queue_tasks(tasks, chat_id=user_id)
+
+        # Blog pipeline gère son propre cycle (fire-and-forget + PipelineBudget)
+        # → dispatch direct, pas via TaskManager
+        blog_tasks  = [t for t in tasks if t.get("agent") == "blog"]
+        other_tasks = [t for t in tasks if t.get("agent") != "blog"]
+
+        for bt in blog_tasks:
+            _bt_ctx = bt.get("context", {})
+            _bt_ctx["_user_id"] = user_id
+            result = await dispatch(bt.get("agent", "blog"), bt.get("command", "rédiger"), _bt_ctx)
+            _add_to_history(user_id, "assistant", result)
+            await _send_md(update, result)
+
+        if other_tasks:
+            tm = get_task_manager()
+            if tm is None:
+                await update.message.reply_text("TaskManager non disponible — relance le bot.")
+                return
+            confirm = await tm.queue_tasks(other_tasks, chat_id=user_id)
+            await update.message.reply_text(confirm)
+
+        if not blog_tasks and not other_tasks:
+            await update.message.reply_text(reply)
+
         _add_to_history(user_id, "assistant", reply)
-        await update.message.reply_text(confirm)
         return
 
     # ── Format tâche unique (défaut) ─────────────────────────────────────────

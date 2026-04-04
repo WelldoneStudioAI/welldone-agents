@@ -55,7 +55,7 @@ class PipelineBudget:
     Budget dur : 15 000 tokens, 600s.
     """
     max_tokens: int = 15_000
-    max_seconds: int = 360  # 6 min — rédaction ~90s + images ~180s + qualité ~30s + overhead
+    max_seconds: int = 480  # 8 min — rédaction ~90s + images+publish ~240s + qualité ~30s + overhead
 
     def __init__(self):
         self.used_tokens: int = 0
@@ -216,7 +216,7 @@ class BlogPipelineAgent(BaseAgent):
                 ctx_illustrer["slug"] = actual_slug
             raw2 = await asyncio.wait_for(
                 dispatch("framer", "illustrer", ctx_illustrer),
-                timeout=240,  # sans qa_verify, ~180s réalistes
+                timeout=300,  # images ~60s + delete/recreate ~30s + publish ~60s + sleep 15s + marge
             )
             images_result = {"raw": raw2}
             images_ok = True
