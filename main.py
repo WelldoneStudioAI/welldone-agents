@@ -113,47 +113,15 @@ async def main():
         fastapi_app.add_middleware(CORSMiddleware, allow_origins=["*"],
                                    allow_methods=["*"], allow_headers=["*"])
 
-        _WEBHOOK_SECRET = os.environ.get("PAPERCLIP_WEBHOOK_SECRET", "")
-        _SLUG_MAP = {
-            # ── CEO — lit la queue Paperclip et dispatche ──────────────────────
-            "ceo":            ("ceo",       "dispatch"),
-            "ceo-status":     ("ceo",       "status"),
-            # ── Agents spécialisés ────────────────────────────────────────────
-            "chef-marketing": ("blog",      "rédiger"),
-            "chef-seo":       ("analytics", "rapport"),
-            "chef-design":    ("framer",    "liste"),
-            "chef-email":           ("email", "trier"),
-            "email-filtres":        ("email", "filtres"),
-            "email-creer-filtre":   ("email", "créer_filtre"),
-            "email-appliquer":      ("email", "appliquer_filtres"),
-            "email-whitelist":      ("email", "construire_whitelist"),
-            "email-trier-boite":    ("email", "trier_boite"),
-            "email-auto-trier":     ("email", "auto_trier"),
-            "veille":         ("veille",    "run"),
-            "blog-rediger":   ("blog",      "rédiger"),
-            "analytics":      ("analytics", "rapport"),
-            "framer-rediger":   ("framer",          "rédiger"),
-            "layout-guardian":  ("layout_guardian", "inspecter"),
-            "layout-juge":      ("layout_guardian", "juge"),
-        }
+        _WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 
-        class _NativeCtx(BaseModel):
-            taskId: str | None = None
-            wakeReason: str | None = "task_assigned"
-            commentId: str | None = None
-
-        class _NativePayload(BaseModel):
-            runId: str | None = None
-            agentId: str | None = None
-            companyId: str | None = None
-            context: _NativeCtx | None = None
+        class _RunPayload(BaseModel):
             sujet: str | None = None
-            page: str | None = None
-            url: str | None = None
+            context: dict | None = None
 
         def _check_secret(authorization: str = Header(default="")):
             if not _WEBHOOK_SECRET:
-                return
+                return  # Pas de secret configuré → accès ouvert (dev / Railway interne)
             token = authorization.replace("Bearer ", "").strip()
             if token != _WEBHOOK_SECRET:
                 raise HTTPException(status_code=401, detail="Invalid token")
@@ -197,7 +165,7 @@ async def main():
             from fastapi.responses import JSONResponse
             return JSONResponse(payload, status_code=200 if healthy else 503)
 
-        # ── /health — alias legacy (Paperclip) ────────────────────────────────
+        # ── /health — alias legacy ────────────────────────────────────────────
         @fastapi_app.get("/health")
         async def _health():
             from core.dispatcher import REGISTRY, discover_agents
@@ -250,49 +218,41 @@ async def main():
             await _send_lead_notification(data)
             return {"status": "ok", "notified": True}
 
-        @fastapi_app.get("/paperclip/agents")
-        async def _paperclip_agents():
-            return {"slugs": list(_SLUG_MAP.keys())}
-
-        @fastapi_app.post("/paperclip/{slug}")
-        async def _paperclip_run(slug: str, payload: _NativePayload,
-                                 authorization: str = Header(default="")):
+        @fastapi_app.get("/agents")
+        async def _list_agents(authorization: str = Header(default="")):
             _check_secret(authorization)
-            if slug not in _SLUG_MAP:
-                raise HTTPException(status_code=404,
-                                    detail=f"Slug '{slug}' inconnu. Disponibles: {list(_SLUG_MAP.keys())}")
-            agent_name, command = _SLUG_MAP[slug]
-            ctx = payload.context or _NativeCtx()
-            task_id = ctx.taskId or (payload.runId or "paperclip")
-            _budgets = {"chef-marketing": 15000, "chef-seo": 8000,
-                        "veille": 10000, "chef-design": 2000}
-            budget_tokens = _budgets.get(slug, 5000)
+            from core.dispatcher import REGISTRY, discover_agents
+            if not REGISTRY:
+                discover_agents()
+            return {
+                name: {"description": a.description, "commands": list(a.commands.keys())}
+                for name, a in REGISTRY.items()
+            }
 
+        @fastapi_app.post("/run/{agent_name}/{command}")
+        async def _run_agent(agent_name: str, command: str, payload: _RunPayload,
+                             authorization: str = Header(default="")):
+            """Déclenche un agent/commande directement — utilisé par le cron Railway et les webhooks."""
+            _check_secret(authorization)
             import asyncio as _aio
             try:
                 from core.dispatcher import REGISTRY, discover_agents
                 if not REGISTRY:
                     discover_agents()
                 if agent_name not in REGISTRY:
-                    raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' non trouvé")
-                agent = REGISTRY[agent_name]
-                agent_ctx = {"task_id": task_id, "wake_reason": ctx.wakeReason or "task_assigned"}
-                if payload.sujet: agent_ctx["sujet"] = payload.sujet
-                if payload.page:  agent_ctx["page"]  = payload.page
-                if payload.url:   agent_ctx["url"]   = payload.url
+                    raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' inconnu")
+                agent_ctx = dict(payload.context or {})
+                if payload.sujet:
+                    agent_ctx["sujet"] = payload.sujet
                 result = await _aio.wait_for(
-                    agent.run_command(command, agent_ctx),
+                    REGISTRY[agent_name].run_command(command, agent_ctx or None),
                     timeout=300,
                 )
-                # NOTE: tokens_used non mesuré ici — chaque agent gère son propre budget.
-                # Ne pas rapporter 0 comme si c'était la vraie consommation.
-                return {"status": "success", "result": str(result),
-                        "usage": {"tokens_measured": False,
-                                  "max_tokens": budget_tokens}}
+                return {"status": "success", "result": str(result)}
             except _aio.TimeoutError:
                 raise HTTPException(status_code=504, detail="Timeout 5 min dépassé")
             except Exception as exc:
-                log.error(f"paperclip/{slug} error: {exc}")
+                log.error(f"/run/{agent_name}/{command} error: {exc}")
                 raise HTTPException(status_code=500, detail=str(exc))
 
         def run_api():
@@ -306,7 +266,7 @@ async def main():
 
         api_thread = threading.Thread(target=run_api, daemon=True, name="uvicorn-api")
         api_thread.start()
-        log.info(f"main: API Paperclip inline → http://0.0.0.0:{port}")
+        log.info(f"main: API HTTP → http://0.0.0.0:{port}")
     except Exception as e:
         import traceback
         log.error(f"main: API inline failed ({e})\n{traceback.format_exc()}")

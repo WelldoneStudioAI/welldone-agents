@@ -19,7 +19,7 @@ restartPolicyMaxRetries = 3
 # GOOGLE_SERVICE_ACCOUNT_JSON  — GA4 + Calendar
 # GOOGLE_REFRESH_TOKEN / GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET — Gmail OAuth
 
-# Cron job : réveille le CEO chaque matin lun-ven à 8h03 EST (13h03 UTC)
+# Cron job : briefing matin lun-ven à 8h03 EST (13h03 UTC)
 [[crons]]
 schedule  = "3 13 * * 1-5"
-command   = "python -c \"\nimport urllib.request, urllib.parse, json\nurl = 'http://localhost:$PORT/paperclip/ceo'\ndata = json.dumps({'context': {'wakeReason': 'morning_dispatch'}}).encode()\nreq = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + __import__('os').environ.get('PAPERCLIP_WEBHOOK_SECRET', '')})\nresp = urllib.request.urlopen(req, timeout=400)\nprint(resp.read().decode()[:500])\n\""
+command   = "python -c \"\nimport urllib.request, json, os\nurl = 'http://localhost:' + os.environ.get('PORT', '8080') + '/run/ceo/dispatch'\ndata = json.dumps({}).encode()\nreq = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + os.environ.get('WEBHOOK_SECRET', '')})\nresp = urllib.request.urlopen(req, timeout=60)\nprint(resp.read().decode()[:500])\n\""

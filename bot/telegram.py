@@ -739,13 +739,13 @@ def build_app() -> Application:
     )
     log.info("TaskManager initialisé avec guardrails actifs")
 
-    # Exposer le TaskManager + loop principal à l'API Paperclip (thread séparé)
+    # Exposer le TaskManager + loop principal au dashboard (api/server.py)
     try:
         from api.server import set_main_loop
         set_main_loop(asyncio.get_event_loop(), _task_manager)
-        log.info("TaskManager exposé à l'API Paperclip via set_main_loop()")
+        log.info("TaskManager exposé au dashboard via set_main_loop()")
     except Exception as e:
-        log.warning(f"Impossible d'exposer TaskManager à l'API: {e}")
+        log.warning(f"Impossible d'exposer TaskManager au dashboard: {e}")
 
     # Commandes fixes
     app.add_handler(CommandHandler("start",  cmd_start))

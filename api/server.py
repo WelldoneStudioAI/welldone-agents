@@ -1,31 +1,14 @@
 """
-api/server.py — Serveur HTTP FastAPI pour Paperclip HTTP Adapter + Dashboard web.
+api/server.py — Dashboard web + exposition du TaskManager.
 
-Expose chaque agent comme endpoint REST que Paperclip peut appeler.
 Tourne en parallèle du bot Telegram sur le port $PORT (Railway) ou 8080.
+Utilisé pour :
+  - set_main_loop() : expose le TaskManager au dashboard
+  - Dashboard web : GET / → dashboard/index.html
+  - SSE logs : GET /logs/stream
+  - POST /dashboard/command → stream de commande
 
-Format Paperclip HTTP Adapter (format officiel Paperclip):
-  POST /paperclip/{slug}
-  Body: { "runId": "...", "agentId": "...", "companyId": "...",
-          "context": { "taskId": "...", "wakeReason": "...", "commentId": "..." } }
-  Returns: { "status": "success"|"error", "result": "...", "usage": {...} }
-
-  Mapping slug → agent/command (configurable via PAPERCLIP_AGENTS env):
-    chef-marketing   → blog.rédiger
-    chef-seo         → analytics.rapport
-    chef-design      → framer.liste
-    chef-email       → email.trier
-    veille           → veille.run
-
-Format legacy (toujours supporté):
-  POST /agents/{name}/{command}
-  Body: { "runId": "...", "agentId": "...", "taskId": "...", "context": {...} }
-
-Dashboard web:
-  GET  /          → dashboard/index.html
-  POST /dashboard/command → SSE stream
-  GET  /logs      → JSON snapshot
-  GET  /logs/stream → SSE temps réel
+Le bot est piloté via Telegram — pas besoin d'endpoints HTTP pour les agents.
 """
 import asyncio
 import json
