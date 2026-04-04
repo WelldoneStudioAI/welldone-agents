@@ -423,7 +423,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Ces agents font des appels Claude lourds → doivent passer par les guardrails
     _TASK_MANAGED_AGENTS = {
         ("framer",    "rédiger"),
-        ("blog",      "rédiger"),
+        # ("blog", "rédiger") retiré — le pipeline blog gère son propre cycle
+        # (fire-and-forget + PipelineBudget + notification Telegram)
         ("analytics", "rapport"),
         ("analytics", "opportunities"),
         ("veille",    "run"),

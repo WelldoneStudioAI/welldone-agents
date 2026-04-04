@@ -12,6 +12,7 @@ Deux fonctions publiques :
 
 0 appels Claude. Uniquement API Notion directe (urllib). Timeout: 10s.
 """
+import asyncio
 import json
 import logging
 import urllib.request
@@ -98,7 +99,7 @@ async def pipeline_create(
     }
 
     try:
-        page = _notion_post("pages", payload)
+        page = await asyncio.to_thread(_notion_post, "pages", payload)
         url  = page.get("url", "")
         log.info(f"notion_delivery.pipeline_create: {agent}/{type_} → {url}")
         return url or None
@@ -149,7 +150,7 @@ async def pipeline_log(
         payload["children"] = _content_to_blocks(notes[:2000])
 
     try:
-        page = _notion_post("pages", payload)
+        page = await asyncio.to_thread(_notion_post, "pages", payload)
         url  = page.get("url", "")
         log.info(f"notion_delivery.pipeline_log: {agent} → {url}")
         return url or None

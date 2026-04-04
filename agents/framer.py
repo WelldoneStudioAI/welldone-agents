@@ -34,6 +34,7 @@ except ImportError:
 
 from agents._base import BaseAgent
 from core.brain import get_client
+from core.guardrails import safe_claude_call
 import base64
 from config import (CLAUDE_MODEL, FRAMER_API_KEY, FRAMER_COLLECTION_ID,
                     FRAMER_PROJECTS_COLLECTION_ID, FRAMER_STAGING_URL,
@@ -865,6 +866,8 @@ class FramerAgent(BaseAgent):
                     slug, cached = k, _article_cache[k]
                     break
 
+        _cached_list_res = None  # réutilisé pour le delete plus bas (BUG 4 fix)
+
         if cached:
             titre        = cached["titre"]
             field_data   = dict(cached["field_data"])
@@ -873,18 +876,18 @@ class FramerAgent(BaseAgent):
         else:
             # Cache vide (redémarrage Railway) → récupérer depuis Framer
             log.info(f"framer.illustrer: cache vide, chargement depuis Framer pour slug={slug!r}")
-            list_res = await framer_list_items()
-            if not list_res.get("ok"):
-                return f"❌ Impossible de lire Framer: {list_res.get('error')}"
+            _cached_list_res = await framer_list_items()
+            if not _cached_list_res.get("ok"):
+                return f"❌ Impossible de lire Framer: {_cached_list_res.get('error')}"
 
             item = next(
-                (i for i in list_res.get("items", [])
+                (i for i in _cached_list_res.get("items", [])
                  if slug and (i.get("slug") == slug or slug in (i.get("slug") or ""))),
                 None,
             )
             # Dernier recours : article le plus récent
-            if not item and list_res.get("items"):
-                item = list_res["items"][-1]
+            if not item and _cached_list_res.get("items"):
+                item = _cached_list_res["items"][-1]
                 slug = item.get("slug", slug)
 
             if not item:
@@ -896,7 +899,6 @@ class FramerAgent(BaseAgent):
 
             titre        = item.get("title", slug)
             field_data   = dict(item.get("field_data") or {})
-            # Construire un brief visuel à partir du titre (meilleur que le slug brut)
             titre_clean  = titre.replace("_", " ").strip()
             visual_brief = (
                 f"Editorial photography for a branding and creative studio article about: '{titre_clean}'. "
@@ -980,7 +982,8 @@ class FramerAgent(BaseAgent):
         # Supprimer l'ancien item puis recréer avec les images IA
         # (Framer WS n'expose pas updateCollectionItems)
         # Pattern sécurisé : sauvegarder field_data AVANT de supprimer
-        list_res = await framer_list_items()
+        # Réutilise _cached_list_res si disponible (évite 2e appel WebSocket — BUG 4 fix)
+        list_res = _cached_list_res or await framer_list_items()
         item_id        = None
         original_fd    = {}   # backup pour restauration d'urgence
         if list_res.get("ok"):
@@ -993,7 +996,7 @@ class FramerAgent(BaseAgent):
         if item_id:
             await framer_delete_item(item_id)
             log.info(f"framer.illustrer: ancien item supprimé ({item_id})")
-            await asyncio.sleep(10)  # Framer doit propager la suppression (3s était trop court)
+            await asyncio.sleep(5)  # Framer doit propager la suppression
 
         # Recréer avec 3 tentatives (slug peut encore être "en use" côté Framer)
         new_res = None
@@ -1002,7 +1005,7 @@ class FramerAgent(BaseAgent):
             if new_res.get("ok"):
                 break
             log.warning(f"framer.illustrer: recréation tentative {_attempt+1}/3 — {new_res.get('error','')[:80]}")
-            await asyncio.sleep(8)
+            await asyncio.sleep(3)
 
         if not new_res or not new_res.get("ok"):
             # CATASTROPHE : article supprimé, recréation impossible
@@ -1030,24 +1033,17 @@ class FramerAgent(BaseAgent):
         # Retirer du cache (phase terminée)
         _article_cache.pop(slug, None)
 
-        # QA bloquant — vérifie slug + publish + deployment ID
-        editor_url = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
-        qa = await framer_qa_verify(final_slug)
-        if not qa.get("ok"):
-            return (
-                f"⚠️ *Images ajoutées mais QA échoué (étape: {qa.get('step')})* \n\n"
-                f"📰 *{titre}*\n"
-                f"❌ {qa.get('error')}\n\n"
-                f"🔧 [Ouvrir l'éditeur Framer]({editor_url})"
-            )
+        # Construire staging URL directement (pas de publish auto → JP publie via bouton Telegram)
+        staging_url = ""
+        if FRAMER_STAGING_URL:
+            staging_url = f"{FRAMER_STAGING_URL.rstrip('/')}/journal/{final_slug}"
 
-        framer_editor = qa.get("staging_url", editor_url)  # lien éditeur Framer
         return (
-            f"🎨 *Images IA ajoutées — en draft Framer*\n\n"
+            f"🎨 *Images IA ajoutées — article prêt !*\n\n"
             f"📰 *{titre}*\n"
             f"🖼️ {n_ok}/{len(IMAGE_FIELDS)} images Gemini\n\n"
-            f"👁 [Réviser dans Framer]({framer_editor})\n"
-            f"_Lance `/framer publier` quand prêt_"
+            f"👁 [Réviser en staging]({staging_url})\n"
+            f"_Clique le bouton 🌐 pour publier sur awelldone.com_"
         )
 
     async def collections(self, context: dict | None = None) -> str:
@@ -1127,14 +1123,17 @@ class FramerAgent(BaseAgent):
 
         article: dict = {}
         last_raw = ""
+        _budget = ctx.get("_pipeline_budget")  # SessionBudget du pipeline (si appelé depuis blog)
         for attempt in range(2):   # max 2 tentatives
             try:
-                # asyncio.to_thread : évite de bloquer l'event loop pendant l'appel sync
-                resp = await asyncio.to_thread(
-                    get_client().messages.create,
+                resp = await safe_claude_call(
+                    get_client(),
                     model=CLAUDE_MODEL,
                     max_tokens=8000,
                     messages=[{"role": "user", "content": _GENERATION_PROMPT.format(sujet=sujet)}],
+                    timeout_s=90,
+                    budget=_budget,
+                    agent_name="framer.rediger",
                 )
                 last_raw = resp.content[0].text.strip()
                 log.debug(f"framer: Claude stop_reason={resp.stop_reason} len={len(last_raw)}")
@@ -1171,8 +1170,9 @@ class FramerAgent(BaseAgent):
                 }
 
         # ── 3. Construire le fieldData Framer (IDs exacts) ─────────────────────
-        # Suffixe MMDD-HHmm pour unicité absolue (même sujet, même jour → slug différent)
-        _ts_suffix = _datetime.now().strftime("%m%d-%H%M")
+        # Suffixe MMDD + random 5-char pour unicité absolue (pas de collision même minute)
+        _rand = "".join(random.choices(string.ascii_lowercase + string.digits, k=5))
+        _ts_suffix = f"{_datetime.now().strftime('%m%d')}-{_rand}"
         slug_base  = _make_slug(article.get("slug") or article.get("Title") or sujet)
         slug       = f"{slug_base[:68]}-{_ts_suffix}"   # max 80 chars
         field_data: dict = {}

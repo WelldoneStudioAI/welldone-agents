@@ -12,7 +12,7 @@ Architecture :
 Guardrails ABSOLUS :
   - Pipeline linéaire : aucun agent ne rappelle un autre
   - 15 000 tokens max pour tout le pipeline
-  - Timeouts durs : rédaction 90s, images 45s, qualité 30s, total 240s
+  - Timeouts durs : rédaction 200s, images 240s, qualité 30s, total 360s
   - Si qualité < 6/10 → notifier JP mais NE PAS régénérer
   - Chaque étape échoue gracieusement (continue à l'étape suivante)
 """
@@ -55,7 +55,7 @@ class PipelineBudget:
     Budget dur : 15 000 tokens, 600s.
     """
     max_tokens: int = 15_000
-    max_seconds: int = 600
+    max_seconds: int = 360  # 6 min — rédaction ~90s + images ~180s + qualité ~30s + overhead
 
     def __init__(self):
         self.used_tokens: int = 0
@@ -142,6 +142,7 @@ class BlogPipelineAgent(BaseAgent):
         article_result: dict = {}
         images_result: dict = {}
         qualite_result: dict = {}
+        _cached_article: dict = {}
         etape1_ok = False
         images_ok = False
         img_count = 0
@@ -215,7 +216,7 @@ class BlogPipelineAgent(BaseAgent):
                 ctx_illustrer["slug"] = actual_slug
             raw2 = await asyncio.wait_for(
                 dispatch("framer", "illustrer", ctx_illustrer),
-                timeout=150,
+                timeout=240,  # sans qa_verify, ~180s réalistes
             )
             images_result = {"raw": raw2}
             images_ok = True
@@ -277,8 +278,8 @@ class BlogPipelineAgent(BaseAgent):
             qualite_result = {"score": 0, "ok": True, "raison": f"Scoring indisponible"}
 
         # ── Notification finale ────────────────────────────────────────────────
-        # L'article est publié — on notifie JP dans tous les cas
-        log.info(f"blog_pipeline: pipeline terminé — notification JP")
+        budget.sync_tokens()  # BUG 12 fix : sync tokens avant notification
+        log.info(f"blog_pipeline: pipeline terminé — tokens={budget.used_tokens} notification JP")
         await self._notify_done(
             sujet=sujet,
             slug=actual_slug,
@@ -289,6 +290,7 @@ class BlogPipelineAgent(BaseAgent):
             qualite_result=qualite_result,
             budget=budget,
             attempt=1,
+            cached_article=_cached_article,
         )
 
     async def _notify_done(
@@ -302,12 +304,14 @@ class BlogPipelineAgent(BaseAgent):
         qualite_result: dict = None,
         budget: PipelineBudget = None,
         attempt: int = 1,
+        cached_article: dict = None,
     ) -> None:
-        """Envoie la notification de succès à JP via Telegram."""
+        """Envoie la notification de succès à JP via Telegram + crée page Notion."""
         from core.telegram_notifier import notify
         article_result  = article_result  or {}
         images_result   = images_result   or {}
         qualite_result  = qualite_result  or {}
+        cached_article  = cached_article  or {}
 
         score = qualite_result.get("score", 0)
         raison = qualite_result.get("raison", "")
@@ -318,7 +322,7 @@ class BlogPipelineAgent(BaseAgent):
         score_emoji = "🟢" if score >= 8 else "🟡"
         retry_note = f" _(corrigé en {attempt} tentative{'s' if attempt > 1 else ''})_" if attempt > 1 else ""
 
-        # URL staging (framer.app) — retournée par illustrer() via framer_qa_verify
+        # URL staging (framer.app) — retournée par illustrer()
         staging_lien = ""
         img_raw = images_result.get("raw", "")
         if img_raw:
@@ -331,6 +335,34 @@ class BlogPipelineAgent(BaseAgent):
             from agents.framer import FRAMER_PROJECT_ID
             staging_lien = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
 
+        # ── Créer page Notion avec contenu complet (BUG 11 fix) ───────────────
+        notion_url = ""
+        try:
+            from core.notion_delivery import pipeline_create
+            titre = cached_article.get("Title", "") or _extract_titre(article_result.get("raw", ""), sujet)
+            # Assembler le contenu de l'article pour Notion
+            _parts = [f"# {titre}\n"]
+            for _h in ("Heading1-Titre", "Heading1-Text", "Heading2-Titre", "Heading2-Text",
+                        "Heading3-Titre", "Heading3-Text", "Heading4-Titre", "Heading4-Text",
+                        "Heading5-Titre", "Heading5-Text"):
+                val = cached_article.get(_h, "")
+                if val:
+                    if _h.endswith("-Titre"):
+                        _parts.append(f"\n## {val}\n")
+                    else:
+                        _parts.append(val)
+            _content = "\n".join(_parts) if len(_parts) > 1 else f"Article sur : {sujet}"
+            notion_url = await pipeline_create(
+                title=titre or sujet[:100],
+                agent="blog",
+                type_="article",
+                content=_content,
+                framer_url=staging_lien,
+                status="Prêt révision",
+            ) or ""
+        except Exception as _ne:
+            log.warning(f"blog_pipeline: Notion pipeline_create skip ({_ne})")
+
         lines = [
             f"✅ *Article créé — prêt à réviser !*{retry_note}",
             f"📝 _{sujet[:100]}_",
@@ -339,12 +371,10 @@ class BlogPipelineAgent(BaseAgent):
             f"{'✅' if images_ok else '⚠️'} Images",
             "",
             f"👁 [Réviser en staging]({staging_lien})",
-            f"_Connecte-toi à Framer pour accéder au staging._",
         ]
-
-        lines.append(
-            f"\n_Durée : {elapsed:.0f}s | Tokens : {tokens_used}/{max_tokens}_"
-        )
+        if notion_url:
+            lines.append(f"📋 [Voir dans Notion]({notion_url})")
+        lines.append(f"\n_Durée : {elapsed:.0f}s | Tokens : {tokens_used}/{max_tokens}_")
 
         msg = "\n".join(lines)
 
@@ -363,7 +393,7 @@ class BlogPipelineAgent(BaseAgent):
             except Exception as _ke:
                 log.warning(f"blog_pipeline: keyboard build failed: {_ke}")
 
-        log.info(f"blog_pipeline: succès notifié — score={score}/10 tentative={attempt}")
+        log.info(f"blog_pipeline: succès notifié — score={score}/10 tokens={tokens_used}")
         await notify(msg, reply_markup=keyboard)
 
 
