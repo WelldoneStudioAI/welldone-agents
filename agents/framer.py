@@ -1207,6 +1207,20 @@ class FramerAgent(BaseAgent):
         img_count = len([f for f in IMAGE_FIELDS if field_data.get(FIELD_MAP[f]["id"])])
         log.info(f"framer.rediger: ✅ article créé — slug={slug} fields={len(field_data)}")
 
+        _staging_url = f"{FRAMER_STAGING_URL}/journal/{slug}" if FRAMER_STAGING_URL else f"/journal/{slug}"
+
+        # ── Pipeline Notion (trace légère) ────────────────────────────────────
+        try:
+            from core.notion_delivery import pipeline_log as _pipeline_log
+            await _pipeline_log(
+                title=titre,
+                agent="framer",
+                framer_url=_staging_url,
+                notes=f"Sujet: {sujet}\nSlug: {slug}\nChamps: {len(field_data)} · Images: {img_count} ({img_source})",
+            )
+        except Exception as _ne:
+            log.warning(f"framer.rediger: notion pipeline skip ({_ne})")
+
         return (
             f"✅ *Article créé dans Framer*\n\n"
             f"📰 *{titre}*\n"

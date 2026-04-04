@@ -48,15 +48,31 @@ class VeilleAgent(BaseAgent):
             self._send_email(idees, notion_url)
             log.info("veille.run done")
 
+            # ── Pipeline Notion ─────────────────────────────────────────────────
+            pipeline_url = None
+            try:
+                from core.notion_delivery import pipeline_create as _pipeline_create
+                pipeline_url = await _pipeline_create(
+                    title=f"Veille contenu — {TODAY}",
+                    agent="veille",
+                    type_="veille",
+                    content=idees,
+                    status="Prêt révision",
+                )
+            except Exception as _ne:
+                log.warning(f"veille: notion pipeline skip ({_ne})")
+
             # Compter les idées réellement générées (lignes commençant par un chiffre)
             import re as _re
-            idees_count = len(_re.findall(r'^\s*\d+[\.\)]', idees, flags=_re.MULTILINE))
-            notion_line = "📋 Page Notion créée\n" if notion_url else "⚠️ Notion skipped\n"
+            idees_count  = len(_re.findall(r'^\s*\d+[\.\)]', idees, flags=_re.MULTILINE))
+            notion_line  = "📋 Page Notion créée\n" if notion_url else "⚠️ Notion skipped\n"
+            pipeline_line = f"📋 [Pipeline Notion]({pipeline_url})\n" if pipeline_url else ""
             return (
                 f"✅ Veille {TODAY} complète !\n"
                 f"📡 {len(sources)} sources · {len(articles)} articles récupérés\n"
                 f"💡 {idees_count} idées générées\n"
                 f"{notion_line}"
+                f"{pipeline_line}"
                 f"📧 Email envoyé à {GMAIL_RECIPIENT}"
             )
         except Exception as e:

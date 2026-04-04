@@ -38,9 +38,10 @@ GOOGLE_OAUTH_SCOPES = [
 
 # ── Notion ────────────────────────────────────────────────────────────────────
 # Supporte NOTION_TOKEN (legacy) et NOTION_API_KEY (Railway actuel)
-NOTION_TOKEN      = os.environ.get("NOTION_TOKEN", "") or os.environ.get("NOTION_API_KEY", "")
-NOTION_TASK_DB    = os.environ.get("NOTION_TASK_DB", "bd4cff932b7842b19f7cb748e1abda48")
-NOTION_SOURCES_DB = os.environ.get("NOTION_SOURCES_DB", "10e87f01b8ec4c60a6383d48c7aac4a2")
+NOTION_TOKEN       = os.environ.get("NOTION_TOKEN", "") or os.environ.get("NOTION_API_KEY", "")
+NOTION_TASK_DB     = os.environ.get("NOTION_TASK_DB", "bd4cff932b7842b19f7cb748e1abda48")
+NOTION_SOURCES_DB  = os.environ.get("NOTION_SOURCES_DB", "10e87f01b8ec4c60a6383d48c7aac4a2")
+NOTION_PIPELINE_DB = os.environ.get("NOTION_PIPELINE_DB", "51b9980b703b46af87d994167ba978f5")
 
 # ── QuickBooks Online ─────────────────────────────────────────────────────────
 QBO_CLIENT_ID      = os.environ.get("QBO_CLIENT_ID", "")

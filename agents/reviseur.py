@@ -545,6 +545,25 @@ class ReviseurAgent(BaseAgent):
             f"\n✅ _Guide validé et prêt. Lance directement :_\n"
             f"`/reviseur liste --collection {col}`"
         )
+
+        # ── Pipeline Notion ─────────────────────────────────────────────────────
+        try:
+            from core.notion_delivery import pipeline_create as _pipeline_create
+            col_name  = guide_data.get("collection_name", col)
+            _title    = f"Guide éditorial — {col_name}"
+            _content  = raw  # guide JSON complet
+            notion_url = await _pipeline_create(
+                title=_title,
+                agent="reviseur",
+                type_="révision",
+                content=_content,
+                status="Prêt révision",
+            )
+            if notion_url:
+                lines.append(f"\n📋 [Guide complet dans Notion]({notion_url})")
+        except Exception as _ne:
+            log.warning(f"reviseur.analyser: notion pipeline skip ({_ne})")
+
         return "\n".join(lines)
 
     # ── Commande : valider ────────────────────────────────────────────────────
@@ -785,6 +804,23 @@ class ReviseurAgent(BaseAgent):
         lines.append(
             f"_Lance `/reviseur appliquer --collection {col} --slug {slug} --numeros \"1, 3\"` (ou \"toutes\")_"
         )
+
+        # ── Pipeline Notion ─────────────────────────────────────────────────────
+        try:
+            from core.notion_delivery import pipeline_create as _pipeline_create
+            _content = "\n".join(lines)
+            notion_url = await _pipeline_create(
+                title=f"Révision — {target['title']}",
+                agent="reviseur",
+                type_="révision",
+                content=_content,
+                status="Prêt révision",
+            )
+            if notion_url:
+                lines.append(f"\n📋 [Recommandations dans Notion]({notion_url})")
+        except Exception as _ne:
+            log.warning(f"reviseur.réviser: notion pipeline skip ({_ne})")
+
         return "\n".join(lines)
 
     # ── Commande : appliquer ──────────────────────────────────────────────────

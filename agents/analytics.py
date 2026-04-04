@@ -88,9 +88,37 @@ class AnalyticsAgent(BaseAgent):
             )
             self._send_email(html, start, end)
             log.info(f"analytics.rapport sent days={days}")
+
+            # ── Pipeline Notion (trace + contenu textuel) ──────────────────────
+            notion_url = None
+            try:
+                from core.notion_delivery import pipeline_create as _pipeline_create
+                _content = (
+                    f"## Analyse — {start} → {end}\n\n"
+                    + "\n".join(analyse)
+                    + "\n\n## Actions prioritaires\n\n"
+                    + "\n".join(actions)
+                    + (
+                        f"\n\n## Opportunités GSC (pos 4-20)\n\n"
+                        + "\n".join(f"• {o}" for o in opps[:15])
+                        if opps else ""
+                    )
+                )
+                notion_url = await _pipeline_create(
+                    title=f"Rapport Analytics — {start} → {end}",
+                    agent="analytics",
+                    type_="rapport",
+                    content=_content,
+                    status="Prêt révision",
+                )
+            except Exception as _ne:
+                log.warning(f"analytics.rapport: notion pipeline skip ({_ne})")
+
+            _notion_line = f"\n📋 [Rapport dans Notion]({notion_url})" if notion_url else ""
             return (
                 f"✅ Rapport Analytics envoyé ({start} → {end})\n"
                 f"📊 {totals['sessions']:,} sessions · {totals['users']:,} utilisateurs"
+                + _notion_line
             )
         except Exception as e:
             log.error(f"analytics.rapport error: {e}", exc_info=True)
