@@ -122,6 +122,19 @@ TIMEZONE = "America/Toronto"
 # Token d'accès au dashboard (URL: ?token=xxx ou cookie)
 DASHBOARD_SECRET = os.environ.get("DASHBOARD_SECRET", "")
 
+# ── Firecrawl (crawl de site web → Markdown) ──────────────────────────────────
+FIRECRAWL_API_KEY = os.environ.get("FIRECRAWL_API_KEY", "")
+
+# ── Site Crawler — chemins de sortie ──────────────────────────────────────────
+# En local (.env) : mettre le chemin complet vers le vault Obsidian
+# En Railway : laisser vide → sortie dans /tmp/site-mirror/
+OBSIDIAN_VAULT_PATH = os.environ.get(
+    "OBSIDIAN_VAULT_PATH",
+    "/Users/welldone/Desktop/Obsidian/WelldoneStudio"
+)
+SITE_STUDIO_URL = os.environ.get("SITE_STUDIO_URL", "https://awelldone.studio")
+SITE_ARCHI_URL  = os.environ.get("SITE_ARCHI_URL",  "https://welldone.archi")
+
 # ── Garde-fous agents ─────────────────────────────────────────────────────────
 CLAUDE_CALL_TIMEOUT_S = int(os.environ.get("CLAUDE_CALL_TIMEOUT_S", "90"))
 CLAUDE_SESSION_BUDGET = int(os.environ.get("CLAUDE_SESSION_BUDGET", "50000"))
