@@ -440,47 +440,15 @@ async def framer_qa_verify(slug: str) -> dict:
         else:
             return {"ok": False, "slug": slug, "error": err_msg, "step": "publish"}
 
-    # ── Étape 3 : construire l'URL de production et vérifier qu'elle est live ──
-    # NOTE: Le staging Framer (.framer.app) est protégé par login Framer →
-    # les liens staging donnent toujours un redirect vers framer.com/login.
-    # La vraie URL publique est awelldone.com/journal/{slug} (production).
-    prod_url = f"https://awelldone.com/journal/{slug}"
-
-    # Attendre que Framer déploie (asynchrone côté Framer après le publish)
-    await asyncio.sleep(12)
-
-    async def _check_prod(url: str) -> bool:
-        """Vérifie que l'URL de prod répond 200 (sans suivre les redirects login)."""
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
-            resp = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: urllib.request.urlopen(req, timeout=10)
-            )
-            return getattr(resp, "status", 0) == 200
-        except Exception:
-            return False
-
-    # Jusqu'à 3 tentatives avec 15s d'écart (total ~42s max)
-    live_url = prod_url  # optimiste — toujours pointer vers prod
-    for _attempt in range(3):
-        if await _check_prod(prod_url):
-            log.info(f"framer_qa_verify: article live → {prod_url}")
-            break
-        if _attempt < 2:
-            log.info(f"framer_qa_verify: article pas encore live (tentative {_attempt+1}/3), attente 15s…")
-            await asyncio.sleep(15)
-    else:
-        log.warning(f"framer_qa_verify: article non confirmé live après 3 tentatives → {prod_url} (optimiste)")
-
-    log.info(f"framer_qa_verify ✅ slug={slug} dep={dep_id} url={live_url}")
+    # ── Succès — URL staging (accessible à JP via son login Framer) ───────────
+    staging_url = f"{staging_base}/journal/{slug}" if staging_base else ""
+    await asyncio.sleep(15)  # laisser Framer terminer le déploiement staging
+    log.info(f"framer_qa_verify ✅ slug={slug} dep={dep_id} url={staging_url}")
     return {
         "ok":           True,
         "slug":         slug,
         "deployment_id": dep_id,
-        "staging_url":  live_url,   # champ legacy — contient l'URL prod publique
+        "staging_url":  staging_url,
     }
 
 
@@ -1240,7 +1208,7 @@ class FramerAgent(BaseAgent):
         img_count = len([f for f in IMAGE_FIELDS if field_data.get(FIELD_MAP[f]["id"])])
         log.info(f"framer.rediger: ✅ article créé — slug={slug} fields={len(field_data)}")
 
-        _staging_url = f"https://awelldone.com/journal/{slug}"  # staging protégé → prod
+        _staging_url = f"{FRAMER_STAGING_URL.rstrip('/')}/journal/{slug}" if FRAMER_STAGING_URL else f"/journal/{slug}"
 
         # ── Pipeline Notion (trace légère) ────────────────────────────────────
         try:
@@ -1258,7 +1226,7 @@ class FramerAgent(BaseAgent):
             f"✅ *Article créé dans Framer*\n\n"
             f"📰 *{titre}*\n"
             f"📋 {len(field_data)} champs · 🖼️ {img_count} images ({img_source})\n"
-            f"👁 {_staging_url}"
+            f"👁 [Voir dans staging]({_staging_url})"
         )
 
     async def liste(self, context: dict | None = None) -> str:
