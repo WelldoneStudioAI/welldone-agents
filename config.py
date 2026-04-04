@@ -123,7 +123,7 @@ TIMEZONE = "America/Toronto"
 DASHBOARD_SECRET = os.environ.get("DASHBOARD_SECRET", "")
 
 # ── Firecrawl (crawl de site web → Markdown) ──────────────────────────────────
-FIRECRAWL_API_KEY = os.environ.get("FIRECRAWL_API_KEY", "")
+FIRECRAWL_API_KEY = os.environ.get("FIRECRAWL_API_KEY", "").strip()
 
 # ── Site Crawler — chemins de sortie ──────────────────────────────────────────
 # En local (.env) : mettre le chemin complet vers le vault Obsidian
