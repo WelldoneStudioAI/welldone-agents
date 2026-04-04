@@ -419,17 +419,34 @@ async def framer_qa_verify(slug: str) -> dict:
             "step": "slug_check",
         }
 
-    # ── Étape 2 : NE PAS publier automatiquement ──────────────────────────────
-    # publish() déploie sur awelldone.com (production) sans review.
-    # JP révise dans l'éditeur Framer et publie manuellement via /framer publier.
-    editor_url = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
+    # ── Étape 2 : publish() → déploie sur staging (*.framer.app) ─────────────
+    async def _do_publish():
+        async with FramerClient(FRAMER_API_KEY) as c:
+            return await c.publish_site()
 
-    log.info(f"framer_qa_verify ✅ slug={slug} (draft — pas encore publié) editor={editor_url}")
+    pub_res = await _framer_op(_do_publish())
+    dep_id = ""
+    if pub_res.get("ok"):
+        pub_data   = pub_res.get("data") or {}
+        deployment = pub_data.get("deployment") or {}
+        dep_id     = deployment.get("id", "")
+    else:
+        err_msg = pub_res.get("error", "")
+        if "no close frame" in err_msg or "close frame" in err_msg or "ConnectionClosed" in err_msg:
+            log.info("framer_qa_verify: publish déclenché (WS fermé par Framer — normal)")
+            dep_id = "ws-triggered"
+        else:
+            return {"ok": False, "slug": slug, "error": err_msg, "step": "publish"}
+
+    staging_base = (FRAMER_STAGING_URL or "").rstrip("/")
+    staging_url  = f"{staging_base}/journal/{slug}" if staging_base else ""
+    await asyncio.sleep(15)  # laisser Framer terminer le déploiement
+    log.info(f"framer_qa_verify ✅ slug={slug} dep={dep_id} url={staging_url}")
     return {
         "ok":           True,
         "slug":         slug,
-        "deployment_id": "draft",
-        "staging_url":  editor_url,   # lien éditeur Framer pour review
+        "deployment_id": dep_id,
+        "staging_url":  staging_url,
     }
 
 
@@ -962,22 +979,48 @@ class FramerAgent(BaseAgent):
 
         # Supprimer l'ancien item puis recréer avec les images IA
         # (Framer WS n'expose pas updateCollectionItems)
+        # Pattern sécurisé : sauvegarder field_data AVANT de supprimer
         list_res = await framer_list_items()
-        item_id  = None
+        item_id        = None
+        original_fd    = {}   # backup pour restauration d'urgence
         if list_res.get("ok"):
-            for item in list_res.get("items", []):
-                if item.get("slug") == slug:
-                    item_id = item.get("id")
+            for _it in list_res.get("items", []):
+                if _it.get("slug") == slug:
+                    item_id     = _it.get("id")
+                    original_fd = dict(_it.get("field_data") or {})
                     break
 
         if item_id:
             await framer_delete_item(item_id)
             log.info(f"framer.illustrer: ancien item supprimé ({item_id})")
-            await asyncio.sleep(3)  # Framer doit propager la suppression avant de réutiliser le slug
+            await asyncio.sleep(10)  # Framer doit propager la suppression (3s était trop court)
 
-        new_res = await framer_add_item(slug, field_data)
-        if not new_res.get("ok"):
-            return f"❌ Erreur recréation Framer: {new_res.get('error', 'Inconnu')}"
+        # Recréer avec 3 tentatives (slug peut encore être "en use" côté Framer)
+        new_res = None
+        for _attempt in range(3):
+            new_res = await framer_add_item(slug, field_data)
+            if new_res.get("ok"):
+                break
+            log.warning(f"framer.illustrer: recréation tentative {_attempt+1}/3 — {new_res.get('error','')[:80]}")
+            await asyncio.sleep(8)
+
+        if not new_res or not new_res.get("ok"):
+            # CATASTROPHE : article supprimé, recréation impossible
+            # Tentative de restauration avec le contenu original (sans images Gemini)
+            log.error(f"framer.illustrer: RESTAURATION d'urgence pour slug={slug}")
+            restore = await framer_add_item(slug, original_fd)
+            if restore.get("ok"):
+                return (
+                    f"⚠️ *Images Gemini non appliquées — article RESTAURÉ dans Framer*\n\n"
+                    f"📰 *{titre}*\n"
+                    f"_Recréation échouée (3 tentatives). L'article original est restauré sans images IA._\n"
+                    f"_Réessaie : `/framer illustrer {slug}`_"
+                )
+            return (
+                f"❌ *ERREUR CRITIQUE — article supprimé et non restauré !*\n"
+                f"Slug : `{slug}`\n"
+                f"Lance `/blog rédiger <sujet>` pour recommencer."
+            )
 
         # Utiliser le slug réellement créé (peut différer si doublon résiduel)
         final_slug = new_res.get("slug", slug)
@@ -1247,12 +1290,40 @@ class FramerAgent(BaseAgent):
 
 
     async def publier(self, context: dict | None = None) -> str:
-        """Lien direct vers Framer Editor pour publier."""
-        editor_url = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
-        return (
-            f"👉 [Ouvrir Framer Editor]({editor_url})\n\n"
-            f"Clique le bouton **Publish** en haut à droite pour mettre le site à jour sur awelldone.studio."
-        )
+        """
+        Publie le site Framer sur awelldone.com (production).
+
+        context: { slug: str — optionnel, pour construire l'URL de l'article }
+        """
+        ctx  = context or {}
+        slug = ctx.get("slug", "").strip()
+
+        log.info(f"framer.publier: déclenchement publish — slug={slug!r}")
+        pub_res = await framer_publish_staging()
+
+        # framer_publish_staging() peut fermer la WS — c'est normal
+        if not pub_res.get("ok"):
+            err = pub_res.get("error", "")
+            if "no close frame" in err or "close frame" in err or "ConnectionClosed" in err:
+                log.info("framer.publier: publish déclenché (WS fermé par Framer — normal)")
+            else:
+                log.error(f"framer.publier: erreur — {err}")
+                return f"❌ Erreur publication : {err[:200]}"
+
+        if slug:
+            pub_url = f"https://awelldone.com/journal/{slug}"
+            return (
+                f"🚀 *Article publié sur awelldone.com !*\n\n"
+                f"🔗 [Voir l'article]({pub_url})\n"
+                f"_Le déploiement peut prendre 1-2 minutes._"
+            )
+        else:
+            editor_url = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
+            return (
+                f"🚀 *Site publié sur awelldone.com !*\n\n"
+                f"👉 [Ouvrir Framer Editor]({editor_url})\n"
+                f"_Le déploiement peut prendre 1-2 minutes._"
+            )
 
 
 agent = FramerAgent()

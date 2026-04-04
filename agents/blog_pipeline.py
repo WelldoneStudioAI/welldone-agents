@@ -19,6 +19,7 @@ Guardrails ABSOLUS :
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -26,6 +27,18 @@ from typing import Any
 
 from agents._base import BaseAgent
 from core.guardrails import SessionBudget, BudgetExceededError
+
+# ── Registre de publication ────────────────────────────────────────────────────
+# Permet aux boutons Telegram inline de retrouver le slug à publier.
+# Clé courte (8 hex) → slug complet.  Callback data: "pub_{key}" ≤ 12 chars.
+_pub_registry: dict[str, str] = {}
+
+
+def _register_pub_slug(slug: str) -> str:
+    """Enregistre le slug et retourne la clé courte pour le callback."""
+    key = hashlib.md5(slug.encode()).hexdigest()[:8]
+    _pub_registry[key] = slug
+    return key
 
 log = logging.getLogger(__name__)
 
@@ -268,6 +281,7 @@ class BlogPipelineAgent(BaseAgent):
         log.info(f"blog_pipeline: pipeline terminé — notification JP")
         await self._notify_done(
             sujet=sujet,
+            slug=actual_slug,
             etape1_ok=etape1_ok,
             images_ok=images_ok,
             article_result=article_result,
@@ -280,53 +294,77 @@ class BlogPipelineAgent(BaseAgent):
     async def _notify_done(
         self,
         sujet: str,
-        etape1_ok: bool,
-        images_ok: bool,
-        article_result: dict,
-        images_result: dict,
-        qualite_result: dict,
-        budget: PipelineBudget,
+        slug: str = "",
+        etape1_ok: bool = True,
+        images_ok: bool = False,
+        article_result: dict = None,
+        images_result: dict = None,
+        qualite_result: dict = None,
+        budget: PipelineBudget = None,
         attempt: int = 1,
     ) -> None:
         """Envoie la notification de succès à JP via Telegram."""
         from core.telegram_notifier import notify
+        article_result  = article_result  or {}
+        images_result   = images_result   or {}
+        qualite_result  = qualite_result  or {}
 
         score = qualite_result.get("score", 0)
         raison = qualite_result.get("raison", "")
-        elapsed = budget.elapsed()
-        tokens_used = budget.used_tokens
+        elapsed = budget.elapsed() if budget else 0
+        tokens_used = budget.used_tokens if budget else 0
+        max_tokens = budget.max_tokens if budget else 15_000
 
         score_emoji = "🟢" if score >= 8 else "🟡"
         retry_note = f" _(corrigé en {attempt} tentative{'s' if attempt > 1 else ''})_" if attempt > 1 else ""
 
-        # Lien éditeur Framer (draft — pas encore publié sur awelldone.com)
-        editor_lien = ""
+        # URL staging (framer.app) — retournée par illustrer() via framer_qa_verify
+        staging_lien = ""
         img_raw = images_result.get("raw", "")
         if img_raw:
-            # illustrer() retourne maintenant le lien éditeur Framer dans staging_url
-            editor_lien = _extract_lien(img_raw)
-        if not editor_lien:
+            staging_lien = _extract_lien(img_raw)
+        if not staging_lien and slug:
+            from agents.framer import FRAMER_STAGING_URL
+            if FRAMER_STAGING_URL:
+                staging_lien = f"{FRAMER_STAGING_URL.rstrip('/')}/journal/{slug}"
+        if not staging_lien:
             from agents.framer import FRAMER_PROJECT_ID
-            editor_lien = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
+            staging_lien = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
 
         lines = [
-            f"✅ *Article créé et validé — en draft !*{retry_note}",
+            f"✅ *Article créé — prêt à réviser !*{retry_note}",
             f"📝 _{sujet[:100]}_",
             "",
             f"{score_emoji} Qualité : *{score}/10* — _{raison[:120]}_",
             f"{'✅' if images_ok else '⚠️'} Images",
             "",
-            f"👁 [Réviser dans Framer]({editor_lien})",
-            f"_Lance `/framer publier` quand prêt_",
+            f"👁 [Réviser en staging]({staging_lien})",
+            f"_Connecte-toi à Framer pour accéder au staging._",
         ]
 
         lines.append(
-            f"\n_Durée : {elapsed:.0f}s | Tokens : {tokens_used}/{budget.max_tokens}_"
+            f"\n_Durée : {elapsed:.0f}s | Tokens : {tokens_used}/{max_tokens}_"
         )
 
         msg = "\n".join(lines)
+
+        # Bouton inline "Publier sur awelldone.com" si on a le slug
+        keyboard = None
+        if slug:
+            try:
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                pub_key = _register_pub_slug(slug)
+                keyboard = InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        "🌐 Publier sur awelldone.com",
+                        callback_data=f"pub_{pub_key}",
+                    )
+                ]])
+            except Exception as _ke:
+                log.warning(f"blog_pipeline: keyboard build failed: {_ke}")
+
         log.info(f"blog_pipeline: succès notifié — score={score}/10 tentative={attempt}")
-        await notify(msg)
+        await notify(msg, reply_markup=keyboard)
 
 
 # ── Utilitaires ────────────────────────────────────────────────────────────────

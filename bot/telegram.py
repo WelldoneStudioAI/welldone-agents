@@ -563,6 +563,24 @@ async def _handle_callback_inner(update, context, query, user_id, data):
             except Exception:
                 await query.edit_message_text(result)
 
+    # ── Publier article sur awelldone.com ─────────────────────────────────────
+    elif data.startswith("pub_"):
+        key = data[4:]  # "pub_{key}" → key
+        from agents.blog_pipeline import _pub_registry
+        slug = _pub_registry.get(key, "")
+        if not slug:
+            await query.edit_message_text(
+                "❌ Session expirée. Lance `/framer publier` manuellement.",
+                parse_mode="Markdown",
+            )
+            return
+        await query.edit_message_text("⏳ Publication sur awelldone.com en cours…")
+        result = await dispatch("framer", "publier", {"slug": slug})
+        try:
+            await query.edit_message_text(result, parse_mode="Markdown")
+        except Exception:
+            await query.edit_message_text(result)
+
     # ── Sélection service (pills) ─────────────────────────────────────────────
     elif data.startswith("svc_"):
         service_name = SERVICE_MAP.get(data)

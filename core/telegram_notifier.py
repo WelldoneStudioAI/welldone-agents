@@ -27,9 +27,18 @@ def set_bot(bot, chat_id: int) -> None:
     log.info(f"telegram_notifier: bot enregistré — chat_id={chat_id}")
 
 
-async def notify(text: str, parse_mode: str = "Markdown") -> bool:
+async def notify(
+    text: str,
+    parse_mode: str = "Markdown",
+    reply_markup=None,
+) -> bool:
     """
     Envoie un message Telegram à JP.
+
+    Args:
+        text: texte du message
+        parse_mode: "Markdown" par défaut
+        reply_markup: InlineKeyboardMarkup optionnel (boutons inline)
 
     Returns:
         True si envoyé, False si bot non initialisé ou erreur.
@@ -40,7 +49,10 @@ async def notify(text: str, parse_mode: str = "Markdown") -> bool:
     try:
         # Tronquer si > 4096 chars (limite Telegram)
         msg = text[:4096] if len(text) > 4096 else text
-        await _bot.send_message(chat_id=_chat_id, text=msg, parse_mode=parse_mode)
+        kwargs: dict = {"chat_id": _chat_id, "text": msg, "parse_mode": parse_mode}
+        if reply_markup is not None:
+            kwargs["reply_markup"] = reply_markup
+        await _bot.send_message(**kwargs)
         log.info(f"telegram_notifier: notification envoyée ({len(msg)} chars)")
         return True
     except Exception as e:
