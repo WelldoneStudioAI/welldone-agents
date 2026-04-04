@@ -299,29 +299,26 @@ class BlogPipelineAgent(BaseAgent):
         score_emoji = "🟢" if score >= 8 else "🟡"
         retry_note = f" _(corrigé en {attempt} tentative{'s' if attempt > 1 else ''})_" if attempt > 1 else ""
 
-        # Prioriser l'URL de illustrer (contient le slug final après delete+recreate)
-        lien_display = ""
+        # Lien éditeur Framer (draft — pas encore publié sur awelldone.com)
+        editor_lien = ""
         img_raw = images_result.get("raw", "")
         if img_raw:
-            img_lien = _extract_lien(img_raw)
-            if img_lien:
-                lien_display = f"[Voir l'article →]({img_lien})"
-        if not lien_display:
-            slug = _extract_slug(article_result.get("raw", ""))
-            from config import FRAMER_STAGING_URL
-            if slug and FRAMER_STAGING_URL:
-                lien_display = f"[Voir l'article →]({FRAMER_STAGING_URL.rstrip('/')}/journal/{slug})"
+            # illustrer() retourne maintenant le lien éditeur Framer dans staging_url
+            editor_lien = _extract_lien(img_raw)
+        if not editor_lien:
+            from agents.framer import FRAMER_PROJECT_ID
+            editor_lien = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
 
         lines = [
-            f"✅ *Article publié et validé !*{retry_note}",
+            f"✅ *Article créé et validé — en draft !*{retry_note}",
             f"📝 _{sujet[:100]}_",
             "",
             f"{score_emoji} Qualité : *{score}/10* — _{raison[:120]}_",
             f"{'✅' if images_ok else '⚠️'} Images",
+            "",
+            f"👁 [Réviser dans Framer]({editor_lien})",
+            f"_Lance `/framer publier` quand prêt_",
         ]
-
-        if lien_display:
-            lines.append(f"\n🔗 {lien_display}")
 
         lines.append(
             f"\n_Durée : {elapsed:.0f}s | Tokens : {tokens_used}/{budget.max_tokens}_"

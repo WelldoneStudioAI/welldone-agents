@@ -419,36 +419,17 @@ async def framer_qa_verify(slug: str) -> dict:
             "step": "slug_check",
         }
 
-    # ── Étape 2 : publish() — sans argument (méthode confirmée fonctionnelle) ──
-    async def _do_publish():
-        async with FramerClient(FRAMER_API_KEY) as c:
-            return await c.publish_site()   # invoke("publish") sans mode
+    # ── Étape 2 : NE PAS publier automatiquement ──────────────────────────────
+    # publish() déploie sur awelldone.com (production) sans review.
+    # JP révise dans l'éditeur Framer et publie manuellement via /framer publier.
+    editor_url = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
 
-    pub_res = await _framer_op(_do_publish())
-    dep_id = ""
-    if pub_res.get("ok"):
-        pub_data   = pub_res.get("data") or {}
-        deployment = pub_data.get("deployment") or {}
-        dep_id     = deployment.get("id", "")
-    else:
-        err_msg = pub_res.get("error", "")
-        # Framer ferme le WebSocket pendant le publish (comportement normal) —
-        # "no close frame" signifie que le publish a bien été reçu par Framer.
-        if "no close frame" in err_msg or "close frame" in err_msg or "ConnectionClosed" in err_msg:
-            log.info(f"framer_qa_verify: publish déclenché (WebSocket fermé par Framer — comportement attendu)")
-            dep_id = "ws-triggered"
-        else:
-            return {"ok": False, "slug": slug, "error": err_msg, "step": "publish"}
-
-    # ── Succès — URL staging (accessible à JP via son login Framer) ───────────
-    staging_url = f"{staging_base}/journal/{slug}" if staging_base else ""
-    await asyncio.sleep(15)  # laisser Framer terminer le déploiement staging
-    log.info(f"framer_qa_verify ✅ slug={slug} dep={dep_id} url={staging_url}")
+    log.info(f"framer_qa_verify ✅ slug={slug} (draft — pas encore publié) editor={editor_url}")
     return {
         "ok":           True,
         "slug":         slug,
-        "deployment_id": dep_id,
-        "staging_url":  staging_url,
+        "deployment_id": "draft",
+        "staging_url":  editor_url,   # lien éditeur Framer pour review
     }
 
 
@@ -1017,14 +998,13 @@ class FramerAgent(BaseAgent):
                 f"🔧 [Ouvrir l'éditeur Framer]({editor_url})"
             )
 
-        staging_base = (FRAMER_STAGING_URL or "").rstrip("/")
-        staging_url  = f"{staging_base}/journal/{final_slug}" if staging_base else qa.get("staging_url", "")
-        dep_id       = qa["deployment_id"]
+        framer_editor = qa.get("staging_url", editor_url)  # lien éditeur Framer
         return (
-            f"🎨 *Images IA ajoutées et publiées !*\n\n"
+            f"🎨 *Images IA ajoutées — en draft Framer*\n\n"
             f"📰 *{titre}*\n"
             f"🖼️ {n_ok}/{len(IMAGE_FIELDS)} images Gemini\n\n"
-            f"👁 {staging_url}"
+            f"👁 [Réviser dans Framer]({framer_editor})\n"
+            f"_Lance `/framer publier` quand prêt_"
         )
 
     async def collections(self, context: dict | None = None) -> str:
