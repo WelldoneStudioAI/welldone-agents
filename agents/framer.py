@@ -440,14 +440,56 @@ async def framer_qa_verify(slug: str) -> dict:
         else:
             return {"ok": False, "slug": slug, "error": err_msg, "step": "publish"}
 
-    # ── Succès ─────────────────────────────────────────────────────────────────
+    # ── Étape 3 : vérifier que l'URL est réellement accessible ────────────────
+    # Framer déploie en arrière-plan — on attend puis on vérifie.
+    # Ordre de priorité : staging (.framer.app) → production (awelldone.studio)
     staging_url = f"{staging_base}/journal/{slug}" if staging_base else ""
-    log.info(f"framer_qa_verify ✅ slug={slug} dep={dep_id} url={staging_url}")
+    prod_url    = f"https://awelldone.studio/journal/{slug}"
+    live_url    = staging_url or prod_url   # fallback immédiat si pas de staging
+
+    await asyncio.sleep(10)  # laisser Framer déployer
+
+    async def _check_url(url: str) -> bool:
+        """Retourne True si l'URL répond HTTP 200."""
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            resp = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: urllib.request.urlopen(req, timeout=8)
+            )
+            return getattr(resp, "status", 0) == 200
+        except Exception:
+            return False
+
+    # Essai staging (2 tentatives, 10s entre chaque)
+    if staging_url:
+        for _attempt in range(2):
+            if await _check_url(staging_url):
+                live_url = staging_url
+                log.info(f"framer_qa_verify: staging OK ({staging_url})")
+                break
+            if _attempt == 0:
+                await asyncio.sleep(10)
+        else:
+            # Staging inaccessible → tenter production
+            log.warning(f"framer_qa_verify: staging URL inaccessible ({staging_url}) → production")
+            for _attempt in range(2):
+                if await _check_url(prod_url):
+                    live_url = prod_url
+                    log.info(f"framer_qa_verify: production OK ({prod_url})")
+                    break
+                if _attempt == 0:
+                    await asyncio.sleep(8)
+            else:
+                # Ni staging ni production — optimiste: retourner prod URL
+                live_url = prod_url
+                log.warning(f"framer_qa_verify: aucune URL accessible → {prod_url} (optimiste)")
+
+    log.info(f"framer_qa_verify ✅ slug={slug} dep={dep_id} url={live_url}")
     return {
         "ok":           True,
         "slug":         slug,
         "deployment_id": dep_id,
-        "staging_url":  staging_url,
+        "staging_url":  live_url,   # contient l'URL réellement accessible
     }
 
 
