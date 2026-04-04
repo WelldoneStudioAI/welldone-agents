@@ -252,36 +252,59 @@ class SiteCrawlerAgent(BaseAgent):
         try:
             fc_app = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
 
-            # crawl_url est synchrone et poll pendant 30-120s
-            # → run_in_executor pour ne pas bloquer l'event loop Telegram
+            # firecrawl-py v2 : crawl() au lieu de crawl_url()
+            # Synchrone + poll → run_in_executor pour ne pas bloquer Telegram
             loop = asyncio.get_event_loop()
-            _crawl = partial(
-                fc_app.crawl_url,
-                domain,
-                params={
-                    "scrapeOptions": {
-                        "formats": ["markdown"],
-                        "excludeTags": ["img", "svg", "nav", "header", "footer", "script", "style"],
-                        "onlyMainContent": True,
+
+            def _do_crawl():
+                # Essayer v2 d'abord (crawl), fallback v1 (crawl_url)
+                crawl_fn = getattr(fc_app, "crawl", None) or getattr(fc_app, "crawl_url", None)
+                if crawl_fn is None:
+                    raise RuntimeError("Méthode crawl introuvable dans firecrawl-py")
+                return crawl_fn(
+                    domain,
+                    params={
+                        "scrapeOptions": {
+                            "formats": ["markdown"],
+                            "excludeTags": ["img", "svg", "nav", "header", "footer", "script", "style"],
+                            "onlyMainContent": True,
+                        },
+                        "limit": 100,
+                        "excludePaths": [
+                            "/cdn-cgi/*", "/api/*", "/_next/*", "/static/*",
+                            "*.jpg", "*.jpeg", "*.png", "*.gif", "*.svg", "*.webp",
+                            "/tag/*", "?ref=*",
+                        ],
                     },
-                    "limit": 100,
-                    "excludePaths": [
-                        "/cdn-cgi/*", "/api/*", "/_next/*", "/static/*",
-                        "*.jpg", "*.jpeg", "*.png", "*.gif", "*.svg", "*.webp",
-                        "/tag/*", "?ref=*",
-                    ],
-                },
-                poll_interval=5,
-            )
-            response = await loop.run_in_executor(None, _crawl)
+                )
+
+            response = await loop.run_in_executor(None, _do_crawl)
         except Exception as e:
             log.error(f"[site] Erreur Firecrawl : {e}")
             return f"❌ Erreur Firecrawl : {e}"
 
-        # Traitement des pages
-        pages = response.get("data", []) if isinstance(response, dict) else []
-        if not pages and hasattr(response, "data"):
-            pages = response.data or []
+        # Traitement des pages — compatible v1 (dict) et v2 (objet avec .data)
+        if isinstance(response, dict):
+            pages = response.get("data", [])
+        elif hasattr(response, "data"):
+            raw = response.data or []
+            # v2 : chaque item peut être un objet avec attributs au lieu d'un dict
+            pages = []
+            for item in raw:
+                if isinstance(item, dict):
+                    pages.append(item)
+                else:
+                    # Convertir objet → dict compatible
+                    d = {}
+                    d["markdown"] = getattr(item, "markdown", "") or ""
+                    meta = getattr(item, "metadata", {}) or {}
+                    if not isinstance(meta, dict):
+                        meta = {k: getattr(meta, k, "") for k in ["url", "title", "description", "statusCode"] if hasattr(meta, k)}
+                    d["metadata"] = meta
+                    d["url"] = getattr(item, "url", "") or meta.get("url", "")
+                    pages.append(d)
+        else:
+            pages = []
 
         stats = {
             "total_found": len(pages),
@@ -374,24 +397,39 @@ class SiteCrawlerAgent(BaseAgent):
         try:
             fc_app = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
             loop   = asyncio.get_event_loop()
-            _scrape = partial(
-                fc_app.scrape_url,
-                url,
-                params={
-                    "formats": ["markdown"],
-                    "excludeTags": ["img", "svg", "nav", "header", "footer", "script", "style"],
-                    "onlyMainContent": True,
-                },
-            )
-            page = await loop.run_in_executor(None, _scrape)
+
+            def _do_scrape():
+                # firecrawl-py v2 : scrape() au lieu de scrape_url()
+                scrape_fn = getattr(fc_app, "scrape", None) or getattr(fc_app, "scrape_url", None)
+                if scrape_fn is None:
+                    raise RuntimeError("Méthode scrape introuvable dans firecrawl-py")
+                return scrape_fn(
+                    url,
+                    params={
+                        "formats": ["markdown"],
+                        "excludeTags": ["img", "svg", "nav", "header", "footer", "script", "style"],
+                        "onlyMainContent": True,
+                    },
+                )
+
+            page = await loop.run_in_executor(None, _do_scrape)
         except Exception as e:
             return f"❌ Erreur Firecrawl : {e}"
 
-        markdown = page.get("markdown", "") if isinstance(page, dict) else ""
+        # Compatible v1 (dict) et v2 (objet avec attributs)
+        if isinstance(page, dict):
+            markdown = page.get("markdown", "")
+            page_dict = page
+        else:
+            markdown = getattr(page, "markdown", "") or ""
+            meta = getattr(page, "metadata", {}) or {}
+            if not isinstance(meta, dict):
+                meta = {k: getattr(meta, k, "") for k in ["url", "title", "description"] if hasattr(meta, k)}
+            page_dict = {"markdown": markdown, "metadata": meta}
         if not markdown:
             return f"❌ Aucun contenu extrait de {url}"
 
-        metadata  = _extract_metadata(page if isinstance(page, dict) else {"markdown": markdown})
+        metadata  = _extract_metadata(page_dict)
         cleaned   = _clean_markdown(markdown)
         content   = _build_md_file(url, cleaned, metadata, crawl_date, site)
 
