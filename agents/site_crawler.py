@@ -257,26 +257,36 @@ class SiteCrawlerAgent(BaseAgent):
             loop = asyncio.get_event_loop()
 
             def _do_crawl():
-                # Essayer v2 d'abord (crawl), fallback v1 (crawl_url)
-                crawl_fn = getattr(fc_app, "crawl", None) or getattr(fc_app, "crawl_url", None)
-                if crawl_fn is None:
-                    raise RuntimeError("Méthode crawl introuvable dans firecrawl-py")
-                return crawl_fn(
-                    domain,
-                    params={
-                        "scrapeOptions": {
-                            "formats": ["markdown"],
-                            "excludeTags": ["img", "svg", "nav", "header", "footer", "script", "style"],
-                            "onlyMainContent": True,
-                        },
-                        "limit": 100,
-                        "excludePaths": [
-                            "/cdn-cgi/*", "/api/*", "/_next/*", "/static/*",
-                            "*.jpg", "*.jpeg", "*.png", "*.gif", "*.svg", "*.webp",
-                            "/tag/*", "?ref=*",
+                # firecrawl-py v2 : kwargs directs, ScrapeOptions object
+                try:
+                    from firecrawl import ScrapeOptions as _SO
+                    scrape_opts = _SO(
+                        formats=["markdown"],
+                        only_main_content=True,
+                        exclude_tags=["img", "svg", "nav", "header", "footer", "script", "style"],
+                    )
+                    return fc_app.crawl(
+                        domain,
+                        limit=100,
+                        scrape_options=scrape_opts,
+                        exclude_paths=[
+                            "/cdn-cgi/", "/api/", "/_next/", "/static/",
+                            "/tag/",
                         ],
-                    },
-                )
+                    )
+                except (ImportError, TypeError):
+                    # Fallback v1 : params dict + crawl_url
+                    crawl_fn = getattr(fc_app, "crawl_url", None) or getattr(fc_app, "crawl", None)
+                    return crawl_fn(
+                        domain,
+                        params={
+                            "scrapeOptions": {
+                                "formats": ["markdown"],
+                                "onlyMainContent": True,
+                            },
+                            "limit": 100,
+                        },
+                    )
 
             response = await loop.run_in_executor(None, _do_crawl)
         except Exception as e:
@@ -399,18 +409,22 @@ class SiteCrawlerAgent(BaseAgent):
             loop   = asyncio.get_event_loop()
 
             def _do_scrape():
-                # firecrawl-py v2 : scrape() au lieu de scrape_url()
-                scrape_fn = getattr(fc_app, "scrape", None) or getattr(fc_app, "scrape_url", None)
-                if scrape_fn is None:
-                    raise RuntimeError("Méthode scrape introuvable dans firecrawl-py")
-                return scrape_fn(
-                    url,
-                    params={
-                        "formats": ["markdown"],
-                        "excludeTags": ["img", "svg", "nav", "header", "footer", "script", "style"],
-                        "onlyMainContent": True,
-                    },
-                )
+                # firecrawl-py v2 : kwargs directs, ScrapeOptions object
+                try:
+                    from firecrawl import ScrapeOptions as _SO
+                    scrape_opts = _SO(
+                        formats=["markdown"],
+                        only_main_content=True,
+                        exclude_tags=["img", "svg", "nav", "header", "footer", "script", "style"],
+                    )
+                    return fc_app.scrape(url, scrape_options=scrape_opts)
+                except (ImportError, TypeError):
+                    # Fallback v1
+                    scrape_fn = getattr(fc_app, "scrape_url", None) or getattr(fc_app, "scrape", None)
+                    return scrape_fn(
+                        url,
+                        params={"formats": ["markdown"], "onlyMainContent": True},
+                    )
 
             page = await loop.run_in_executor(None, _do_scrape)
         except Exception as e:
