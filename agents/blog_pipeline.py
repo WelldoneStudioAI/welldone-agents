@@ -170,8 +170,25 @@ class BlogPipelineAgent(BaseAgent):
 
             # Lire le contenu réel depuis le cache MAINTENANT (avant qu'illustrer ne le supprime)
             from agents.framer import _article_cache
+            _cache_keys = list(_article_cache.keys())
+            log.info(f"blog_pipeline: cache keys={_cache_keys[:5]} actual_slug={actual_slug!r}")
             _cached_qa = _article_cache.get(actual_slug, {}) if actual_slug else {}
             _cached_article = _cached_qa.get("article", {})
+            if not _cached_article and _cache_keys:
+                # Fallback : chercher par correspondance partielle (slug peut différer)
+                for _ck in reversed(_cache_keys):
+                    if actual_slug and (actual_slug in _ck or _ck in actual_slug):
+                        _cached_qa = _article_cache[_ck]
+                        _cached_article = _cached_qa.get("article", {})
+                        log.info(f"blog_pipeline: cache hit partiel — clé={_ck!r}")
+                        break
+                if not _cached_article and _cache_keys:
+                    # Dernier recours : le dernier item du cache
+                    _last_key = _cache_keys[-1]
+                    _cached_qa = _article_cache[_last_key]
+                    _cached_article = _cached_qa.get("article", {})
+                    log.info(f"blog_pipeline: cache fallback dernier item — clé={_last_key!r}")
+            log.info(f"blog_pipeline: _cached_article keys={list(_cached_article.keys())[:8] if _cached_article else '(vide)'}")
 
             budget.sync_tokens()
             log.info(f"blog_pipeline: étape 1 OK — tokens={budget.used_tokens}")

@@ -1033,15 +1033,19 @@ class FramerAgent(BaseAgent):
         # Retirer du cache (phase terminée)
         _article_cache.pop(slug, None)
 
-        # Publish vers staging (nécessaire pour que l'article soit visible sur framer.app)
-        try:
-            await framer_publish_staging()
-            await asyncio.sleep(10)  # Laisser Framer reconstruire le staging
-        except Exception as _pe:
-            log.warning(f"framer.illustrer: publish staging échoué: {_pe}")
+        # QA : vérifie slug dans CMS + publish staging + construit URL
+        editor_url = f"https://framer.com/projects/Welldone-Studio--{FRAMER_PROJECT_ID}"
+        qa = await framer_qa_verify(final_slug)
+        if not qa.get("ok"):
+            return (
+                f"⚠️ *Images ajoutées mais publish échoué ({qa.get('step')})* \n\n"
+                f"📰 *{titre}*\n"
+                f"❌ {qa.get('error','')[:200]}\n\n"
+                f"🔧 [Ouvrir Framer]({editor_url})"
+            )
 
-        staging_url = ""
-        if FRAMER_STAGING_URL:
+        staging_url = qa.get("staging_url", "")
+        if not staging_url and FRAMER_STAGING_URL:
             staging_url = f"{FRAMER_STAGING_URL.rstrip('/')}/journal/{final_slug}"
 
         return (
