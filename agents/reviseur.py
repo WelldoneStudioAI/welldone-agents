@@ -991,9 +991,8 @@ class ReviseurAgent(BaseAgent):
 
         await _publish_staging()
 
-        staging_url = ""
-        if FRAMER_STAGING_URL:
-            staging_url = FRAMER_STAGING_URL.rstrip("/") + f"/{slug}"
+        # URL prod (le staging .framer.app est protégé par login)
+        prod_url = f"https://awelldone.com/journal/{slug}"
 
         modified = list(patch.keys())
         lines = [
@@ -1004,8 +1003,7 @@ class ReviseurAgent(BaseAgent):
         if blocked:
             blocked_nums = ", ".join("#" + str(r["num"]) for r in blocked)
             lines.append(f"⛔ Bloquées (champs protégés) : {blocked_nums}")
-        if staging_url:
-            lines.append(f"\n👁 {staging_url}")
+        lines.append(f"\n👁 {prod_url}")
         return "\n".join(lines)
 
     # ── Commande : éditer ─────────────────────────────────────────────────────
