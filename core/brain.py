@@ -33,7 +33,7 @@ FORMAT RÉPONSE — 2 options possibles :
 
 Option A — tâche unique (défaut) :
 {
-  "agent": "gmail|calendar|notion|analytics|qbo|veille|voyage|email|blog|framer|reviseur|chat",
+  "agent": "gmail|calendar|notion|analytics|qbo|veille|voyage|email|blog|framer|reviseur|site|chat",
   "command": "sous-commande spécifique",
   "context": {paramètres nécessaires},
   "reply": "message court confirmant ce que tu vas faire (1 phrase max)"
@@ -87,6 +87,12 @@ Agents disponibles et leurs responsabilités :
   → Utilise quand JP dit "révise cet article", "améliore cette page", "recommandations de contenu", "audit de page"
 - layout_guardian: {inspecter, juge, rapport} → Framer Layout Guardian — détecte les problèmes de mise en page (overflow, responsive, alignement) et propose des corrections minimales sans redesign. Utilise quand JP dit "inspecte ma page", "problème layout", "responsive cassé", "vérifie le design", "audit UI"
 - email: {trier, lire, chercher, résumer, rédiger, envoyer, filtres, créer_filtre, appliquer_filtres, dossiers} → boîte WHC jptanguay@awelldone.com
+- site: {crawl, page, rapport} → crawler awelldone.studio et welldone.archi → Markdown Obsidian
+  → "crawl" = crawl complet du site principal
+  → "crawl archi" = crawl complet de welldone.archi
+  → "page" = scrape une URL précise — context doit avoir: url (str)
+  → "rapport" = stats du dernier crawl
+  → Utilise quand JP dit "crawle mon site", "crawler le site", "miroir du site", "scrape ma page"
 - chat: {respond} → conversation générale, rédaction, brainstorm
 
 IMPORTANT — agent "email" vs "gmail":

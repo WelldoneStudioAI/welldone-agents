@@ -18,11 +18,13 @@ Déclenchement local (Claude Code) :
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import re
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -221,7 +223,9 @@ class SiteCrawlerAgent(BaseAgent):
         context["args"] peut contenir "archi" pour crawl welldone.archi.
         """
         ctx = context or {}
-        args = str(ctx.get("args", ctx.get("url", ""))).lower()
+        # cmd_agent met le premier arg positionnel dans ctx["id"]
+        # Ex: /site crawl archi → ctx["id"] = "archi"
+        args = str(ctx.get("args", ctx.get("id", ctx.get("url", "")))).lower()
 
         if "archi" in args:
             domain = SITE_ARCHI_URL
@@ -246,10 +250,13 @@ class SiteCrawlerAgent(BaseAgent):
         log.info(f"[site] Démarrage crawl {label} → {out_dir}")
 
         try:
-            app = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
+            fc_app = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
 
-            # Crawl du site — Firecrawl retourne du Markdown nettoyé
-            response = app.crawl_url(
+            # crawl_url est synchrone et poll pendant 30-120s
+            # → run_in_executor pour ne pas bloquer l'event loop Telegram
+            loop = asyncio.get_event_loop()
+            _crawl = partial(
+                fc_app.crawl_url,
                 domain,
                 params={
                     "scrapeOptions": {
@@ -266,6 +273,7 @@ class SiteCrawlerAgent(BaseAgent):
                 },
                 poll_interval=5,
             )
+            response = await loop.run_in_executor(None, _crawl)
         except Exception as e:
             log.error(f"[site] Erreur Firecrawl : {e}")
             return f"❌ Erreur Firecrawl : {e}"
@@ -345,7 +353,8 @@ class SiteCrawlerAgent(BaseAgent):
     async def scrape_page(self, context: dict | None = None) -> str:
         """Scrape une URL précise et l'écrit dans Obsidian."""
         ctx = context or {}
-        url = ctx.get("url", ctx.get("args", ""))
+        # Accepte --url https://..., ctx["id"] (arg positionnel), ou ctx["args"]
+        url = ctx.get("url", ctx.get("args", ctx.get("id", "")))
 
         if not url:
             return "❌ URL manquante. Usage : /site page --url https://awelldone.studio/a-propos"
@@ -363,8 +372,10 @@ class SiteCrawlerAgent(BaseAgent):
         crawl_date = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
         try:
-            app  = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
-            page = app.scrape_url(
+            fc_app = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
+            loop   = asyncio.get_event_loop()
+            _scrape = partial(
+                fc_app.scrape_url,
                 url,
                 params={
                     "formats": ["markdown"],
@@ -372,6 +383,7 @@ class SiteCrawlerAgent(BaseAgent):
                     "onlyMainContent": True,
                 },
             )
+            page = await loop.run_in_executor(None, _scrape)
         except Exception as e:
             return f"❌ Erreur Firecrawl : {e}"
 
