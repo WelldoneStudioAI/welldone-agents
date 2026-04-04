@@ -257,64 +257,56 @@ class SiteCrawlerAgent(BaseAgent):
             loop = asyncio.get_event_loop()
 
             def _do_crawl():
-                # firecrawl-py v2 : kwargs directs, ScrapeOptions object
-                try:
-                    from firecrawl import ScrapeOptions as _SO
-                    scrape_opts = _SO(
-                        formats=["markdown"],
-                        only_main_content=True,
-                        exclude_tags=["img", "svg", "nav", "header", "footer", "script", "style"],
-                    )
-                    return fc_app.crawl(
-                        domain,
-                        limit=100,
-                        scrape_options=scrape_opts,
-                        exclude_paths=[
-                            "/cdn-cgi/", "/api/", "/_next/", "/static/",
-                            "/tag/",
-                        ],
-                    )
-                except (ImportError, TypeError):
-                    # Fallback v1 : params dict + crawl_url
-                    crawl_fn = getattr(fc_app, "crawl_url", None) or getattr(fc_app, "crawl", None)
-                    return crawl_fn(
-                        domain,
-                        params={
-                            "scrapeOptions": {
-                                "formats": ["markdown"],
-                                "onlyMainContent": True,
-                            },
-                            "limit": 100,
-                        },
-                    )
+                # firecrawl-py v2 — API confirmée par introspection
+                # scrape_options = firecrawl.v2.types.ScrapeOptions
+                from firecrawl.v2.types import ScrapeOptions as _SO
+                scrape_opts = _SO(
+                    formats=["markdown"],
+                    only_main_content=True,
+                    exclude_tags=["img", "svg", "nav", "header", "footer", "script", "style"],
+                )
+                return fc_app.crawl(
+                    domain,
+                    limit=100,
+                    scrape_options=scrape_opts,
+                    exclude_paths=["/cdn-cgi/", "/api/", "/_next/", "/static/", "/tag/"],
+                    poll_interval=5,
+                )
 
             response = await loop.run_in_executor(None, _do_crawl)
         except Exception as e:
             log.error(f"[site] Erreur Firecrawl : {e}")
             return f"❌ Erreur Firecrawl : {e}"
 
-        # Traitement des pages — compatible v1 (dict) et v2 (objet avec .data)
+        # Traitement des pages — firecrawl-py v2 retourne un CrawlJob
+        # CrawlJob est itérable et yield des Document (attributs .markdown, .metadata, .url)
+        pages = []
+        raw_pages = []
         if isinstance(response, dict):
-            pages = response.get("data", [])
+            raw_pages = response.get("data", [])
         elif hasattr(response, "data"):
-            raw = response.data or []
-            # v2 : chaque item peut être un objet avec attributs au lieu d'un dict
-            pages = []
-            for item in raw:
-                if isinstance(item, dict):
-                    pages.append(item)
-                else:
-                    # Convertir objet → dict compatible
-                    d = {}
-                    d["markdown"] = getattr(item, "markdown", "") or ""
-                    meta = getattr(item, "metadata", {}) or {}
-                    if not isinstance(meta, dict):
-                        meta = {k: getattr(meta, k, "") for k in ["url", "title", "description", "statusCode"] if hasattr(meta, k)}
-                    d["metadata"] = meta
-                    d["url"] = getattr(item, "url", "") or meta.get("url", "")
-                    pages.append(d)
+            raw_pages = list(response.data or [])
         else:
-            pages = []
+            try:
+                raw_pages = list(response)
+            except Exception:
+                raw_pages = []
+
+        for item in raw_pages:
+            if isinstance(item, dict):
+                pages.append(item)
+            else:
+                # Document v2 → convertir en dict compatible
+                md = getattr(item, "markdown", "") or ""
+                meta = getattr(item, "metadata", None) or {}
+                if not isinstance(meta, dict):
+                    meta = {
+                        k: getattr(meta, k, "")
+                        for k in ["url", "title", "description", "statusCode"]
+                        if hasattr(meta, k)
+                    }
+                item_url = getattr(item, "url", "") or meta.get("url", "")
+                pages.append({"markdown": md, "metadata": meta, "url": item_url})
 
         stats = {
             "total_found": len(pages),
@@ -409,34 +401,25 @@ class SiteCrawlerAgent(BaseAgent):
             loop   = asyncio.get_event_loop()
 
             def _do_scrape():
-                # firecrawl-py v2 : kwargs directs, ScrapeOptions object
-                try:
-                    from firecrawl import ScrapeOptions as _SO
-                    scrape_opts = _SO(
-                        formats=["markdown"],
-                        only_main_content=True,
-                        exclude_tags=["img", "svg", "nav", "header", "footer", "script", "style"],
-                    )
-                    return fc_app.scrape(url, scrape_options=scrape_opts)
-                except (ImportError, TypeError):
-                    # Fallback v1
-                    scrape_fn = getattr(fc_app, "scrape_url", None) or getattr(fc_app, "scrape", None)
-                    return scrape_fn(
-                        url,
-                        params={"formats": ["markdown"], "onlyMainContent": True},
-                    )
+                # firecrawl-py v2 — scrape() avec kwargs directs (pas de ScrapeOptions)
+                return fc_app.scrape(
+                    url,
+                    formats=["markdown"],
+                    only_main_content=True,
+                    exclude_tags=["img", "svg", "nav", "header", "footer", "script", "style"],
+                )
 
             page = await loop.run_in_executor(None, _do_scrape)
         except Exception as e:
             return f"❌ Erreur Firecrawl : {e}"
 
-        # Compatible v1 (dict) et v2 (objet avec attributs)
+        # v2 : Document avec attributs directs ; v1 : dict
         if isinstance(page, dict):
             markdown = page.get("markdown", "")
             page_dict = page
         else:
             markdown = getattr(page, "markdown", "") or ""
-            meta = getattr(page, "metadata", {}) or {}
+            meta = getattr(page, "metadata", None) or {}
             if not isinstance(meta, dict):
                 meta = {k: getattr(meta, k, "") for k in ["url", "title", "description"] if hasattr(meta, k)}
             page_dict = {"markdown": markdown, "metadata": meta}
