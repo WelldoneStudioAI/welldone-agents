@@ -3,6 +3,7 @@ api/server.py — Serveur HTTP FastAPI pour Paperclip HTTP Adapter + Dashboard w
 
 Expose chaque agent comme endpoint REST que Paperclip peut appeler.
 Tourne en parallèle du bot Telegram sur le port $PORT (Railway) ou 8080.
+# 2026-04-05 — ajout endpoint /archi-news-links (cache 5min)
 
 Format Paperclip HTTP Adapter (format officiel Paperclip):
   POST /paperclip/{slug}
