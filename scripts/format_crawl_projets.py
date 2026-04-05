@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """
-scripts/format_crawl_projets.py — Reformateur des fichiers de réalisations crawlés.
+scripts/format_crawl_projets.py — Reformateur de tous les fichiers crawlés dans Site-web/.
 
-Transforme chaque fichier projets/realisations-*.md :
+Transforme chaque fichier .md sous 05-Marketing/Site-web/ (projets, articles, pages, services) :
 1. URL cliquable dans le body (sort du YAML rouge)
 2. Métadonnées (Localisation, Secteur, Type de mandat, Objectif...) → table gauche-droite
-3. Supprime les lignes parasites (Défilez vers le bas, titre en double, etc.)
+3. Supprime les lignes parasites (Défilez vers le bas, titre en double, blocs carousel, etc.)
 
 Usage : python scripts/format_crawl_projets.py
 """
 import re, sys
 from pathlib import Path
 
-VAULT_PATH  = Path("/Users/welldone/Desktop/Obsidian/WelldoneStudio")
-PROJETS_DIR = VAULT_PATH / "05-Marketing" / "Site-web" / "projets"
+VAULT_PATH   = Path("/Users/welldone/Desktop/Obsidian/WelldoneStudio")
+SITE_WEB_DIR = VAULT_PATH / "05-Marketing" / "Site-web"
+
+# Sous-dossiers à traiter (on exclut analyse/ qui contient nos propres docs)
+TARGET_DIRS = ["projets", "articles", "pages", "services"]
 
 # Labels de métadonnées reconnus (ordre de priorité dans la table)
 META_LABELS = [
@@ -63,6 +66,8 @@ NOISE_PATTERNS = [
     r"^\[.*\\\\.*View.*\\\\.*↓\]",
     # Lien "Voir Notre Portfolio"
     r"^\[Voir Notre Portfolio\]",
+    # Lien "Lien Projet" générique (articles)
+    r"^\[Lien Projet\]\(",
     # Lien avec texte Na/N/A
     r"^\[Na\]\(",
     r"^\[N/A\]\(",
@@ -70,6 +75,8 @@ NOISE_PATTERNS = [
     r"^\[.*\]\(mailto:",
     # Lignes de séparation "ON S'EN OCCUPE"
     r"^\[ON S'EN OCCUPE\]",
+    # FAQ label seul
+    r"^FAQ$",
 ]
 
 
@@ -280,26 +287,38 @@ def reformat_file(path: Path) -> bool:
 
 
 def main():
-    files = sorted(PROJETS_DIR.glob("realisations-*.md"))
-    if not files:
-        print(f"❌ Aucun fichier trouvé dans {PROJETS_DIR}")
+    # Collecter tous les fichiers .md des dossiers cibles (pas les _index et _rapport)
+    all_files = []
+    for subdir in TARGET_DIRS:
+        d = SITE_WEB_DIR / subdir
+        if d.exists():
+            files = sorted(f for f in d.glob("*.md") if not f.name.startswith("_"))
+            all_files.extend(files)
+
+    if not all_files:
+        print(f"❌ Aucun fichier trouvé dans {SITE_WEB_DIR}")
         sys.exit(1)
 
-    print(f"📂 {len(files)} fichiers de réalisations à reformater\n")
+    print(f"📂 {len(all_files)} fichiers à reformater\n")
     modified = 0
+    current_dir = None
 
-    for path in files:
+    for path in all_files:
+        if path.parent != current_dir:
+            current_dir = path.parent
+            print(f"\n  📁 {current_dir.name}/")
+
         try:
             changed = reformat_file(path)
             status = "✅" if changed else "·"
-            print(f"  {status} {path.name}")
+            print(f"    {status} {path.name}")
             if changed:
                 modified += 1
         except Exception as e:
-            print(f"  ❌ {path.name} — {e}")
+            print(f"    ❌ {path.name} — {e}")
 
     print(f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print(f"✅ {modified} fichiers reformatés sur {len(files)}")
+    print(f"✅ {modified} fichiers reformatés sur {len(all_files)}")
 
 
 if __name__ == "__main__":
