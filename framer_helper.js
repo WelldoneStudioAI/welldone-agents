@@ -133,6 +133,56 @@ async function main() {
     }
   }
 
+  // ── update ──────────────────────────────────────────────────────────────────
+  // Usage: node framer_helper.js update '<id>' '<json_fieldData>'
+  // json_fieldData: { "fieldId": { "type": "string", "value": "..." }, ... }
+  if (command === "update") {
+    const [itemId, ...jsonParts] = rest
+    const jsonStr = jsonParts.join(" ").trim()
+    if (!itemId || !jsonStr) return err("update: ID et JSON requis")
+
+    let fieldData
+    try {
+      fieldData = JSON.parse(jsonStr)
+    } catch (e) {
+      return err(`update: JSON invalide — ${e.message}`)
+    }
+
+    try {
+      const items = await collection.getItems()
+      const item = items.find(i => i.id === itemId)
+      if (!item) return err(`update: item ${itemId} introuvable`)
+
+      // Utiliser setAttributes avec seulement les champs à modifier
+      // (évite de re-soumettre les champs image/file qui ont des types complexes)
+      if (typeof item.setAttributes === "function") {
+        await item.setAttributes({ fieldData })
+      } else {
+        // Fallback: patcher seulement les champs texte dans le fieldData existant
+        const patched = {}
+        for (const [fid, existingVal] of Object.entries(item.fieldData)) {
+          if (fieldData[fid] !== undefined) {
+            patched[fid] = fieldData[fid]
+          } else if (existingVal.type === "string" || existingVal.type === "boolean" ||
+                     existingVal.type === "number" || existingVal.type === "link" ||
+                     existingVal.type === "enum") {
+            patched[fid] = existingVal
+          }
+          // Skip image/file/array/formattedText qui causent des erreurs de validation
+        }
+        await collection.addItems([{
+          id:        item.id,
+          slug:      item.slug,
+          draft:     item.draft ?? false,
+          fieldData: patched,
+        }])
+      }
+      return ok({ message: `Item ${itemId} mis à jour`, fields: Object.keys(fieldData) })
+    } catch (e) {
+      return err(`update error: ${e.message}`)
+    }
+  }
+
   // ── delete ──────────────────────────────────────────────────────────────────
   if (command === "delete") {
     if (!arg) return err("delete: ID manquant")
@@ -144,7 +194,7 @@ async function main() {
     }
   }
 
-  return err(`Commande inconnue: ${command}. Disponibles: schema, list, create, delete`)
+  return err(`Commande inconnue: ${command}. Disponibles: schema, list, create, update, delete`)
 }
 
 main().catch(e => err(e.message))
