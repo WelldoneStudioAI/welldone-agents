@@ -48,10 +48,11 @@ _TMP_DIR = Path("/tmp/site-mirror")
 _RAPPORT_FILE = _SITE_WEB_DIR / "_crawl-report.md"
 
 # ── Classification des pages par slug ─────────────────────────────────────────
+# RÈGLE : "realisation" est prioritaire — vérifié en premier avant les services
 _SLUG_RULES: list[tuple[list[str], str]] = [
-    (["service", "offre", "photo", "video", "web", "consultation"],  "services"),
-    (["projet", "portfolio", "realisation", "case", "travaux"],      "projets"),
-    (["journal", "blogue", "article", "blog"],                        "articles"),
+    (["realisation", "projet", "portfolio", "case", "travaux"],       "projets"),   # priorité 1
+    (["journal", "blogue", "article", "blog"],                        "articles"),  # priorité 2
+    (["welldone-studio-services", "offre", "consultation"],           "services"),  # priorité 3
     (["a-propos", "about", "equipe", "team", "histoire", "approche"], "pages"),
     (["contact", "devis", "soumission"],                              "pages"),
     (["legal", "confidentialite", "privacy", "conditions"],           "pages"),
