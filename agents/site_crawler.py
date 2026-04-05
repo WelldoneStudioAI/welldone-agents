@@ -48,14 +48,15 @@ _TMP_DIR = Path("/tmp/site-mirror")
 _RAPPORT_FILE = _SITE_WEB_DIR / "_crawl-report.md"
 
 # ── Classification des pages par slug ─────────────────────────────────────────
-# RÈGLE : "realisation" est prioritaire — vérifié en premier avant les services
+# RÈGLE : les patterns les plus spécifiques en premier
 _SLUG_RULES: list[tuple[list[str], str]] = [
-    (["realisation", "projet", "portfolio", "case", "travaux"],       "projets"),   # priorité 1
-    (["journal", "blogue", "article", "blog"],                        "articles"),  # priorité 2
-    (["welldone-studio-services", "offre", "consultation"],           "services"),  # priorité 3
-    (["a-propos", "about", "equipe", "team", "histoire", "approche"], "pages"),
-    (["contact", "devis", "soumission"],                              "pages"),
-    (["legal", "confidentialite", "privacy", "conditions"],           "pages"),
+    (["archi-works/", "archi/archi-works"],                          "projets"),   # projets welldone.archi
+    (["realisation", "projet", "portfolio", "case", "travaux"],      "projets"),   # projets awelldone.studio
+    (["archi/archi-news", "archi/news", "journal", "blogue", "article", "blog"], "articles"),
+    (["welldone-studio-services", "offre", "consultation"],          "services"),
+    (["archi/archi-about", "archi/notre-approche", "a-propos", "about", "equipe", "team"], "pages"),
+    (["archi/archi-contact", "contact", "devis", "soumission"],      "pages"),
+    (["legal", "confidentialite", "privacy", "conditions"],          "pages"),
 ]
 
 
@@ -77,17 +78,23 @@ def _classify_url(url: str) -> str:
 
 
 def _url_to_filename(url: str) -> str:
-    """Convertit une URL en nom de fichier stable."""
+    """Convertit une URL en nom de fichier stable et lisible."""
     path = url.rstrip("/").split("//")[-1]
-    # Retirer le domaine
     parts = path.split("/")
     if len(parts) <= 1 or (len(parts) == 2 and not parts[1]):
         return "accueil"
+
     slug = "-".join(p for p in parts[1:] if p)
-    # Nettoyer : retirer query strings, caractères spéciaux
     slug = re.sub(r"[?#&=].*", "", slug)
     slug = re.sub(r"[^a-z0-9\-]", "-", slug.lower())
     slug = re.sub(r"-+", "-", slug).strip("-")
+
+    # Simplifier les préfixes redondants du site archi
+    # /archi/archi-works/xxx → archi-works-xxx (pas archi-archi-works-xxx)
+    slug = re.sub(r"^archi-archi-works-", "archi-works-", slug)
+    slug = re.sub(r"^archi-archi-news-", "archi-news-", slug)
+    slug = re.sub(r"^archi-archi-", "archi-", slug)
+
     return slug or "page"
 
 
