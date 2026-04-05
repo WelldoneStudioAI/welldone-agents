@@ -194,7 +194,72 @@ async function main() {
     }
   }
 
-  return err(`Commande inconnue: ${command}. Disponibles: schema, list, create, update, delete`)
+  // ── batch-update ─────────────────────────────────────────────────────────────
+  // Usage: node framer_helper.js batch-update '<json_array>'
+  // json_array: [{ "id": "xxx", "slug": "new-slug", "fieldData": { ... } }, ...]
+  // slug est optionnel. fieldData contient seulement les champs à modifier.
+  // Une seule connexion WebSocket pour N mises à jour → 10-20x plus rapide.
+  if (command === "batch-update") {
+    if (!arg) return err("batch-update: JSON array manquant")
+    let updates
+    try {
+      updates = JSON.parse(arg)
+      if (!Array.isArray(updates)) throw new Error("Doit être un tableau JSON")
+    } catch (e) {
+      return err(`batch-update: JSON invalide — ${e.message}`)
+    }
+
+    const items = await collection.getItems()
+    const results = []
+
+    for (const u of updates) {
+      const { id: itemId, slug: newSlug, fieldData } = u
+      if (!itemId) { results.push({ id: itemId, ok: false, error: "id manquant" }); continue }
+
+      const item = items.find(i => i.id === itemId)
+      if (!item) { results.push({ id: itemId, ok: false, error: "introuvable" }); continue }
+
+      try {
+        const attrs = {}
+        if (newSlug)    attrs.slug      = newSlug
+        if (fieldData)  attrs.fieldData = fieldData
+        await item.setAttributes(attrs)
+        results.push({ id: itemId, ok: true })
+      } catch (e) {
+        results.push({ id: itemId, ok: false, error: e.message })
+      }
+    }
+
+    const failed = results.filter(r => !r.ok)
+    return ok({
+      message: `${results.length - failed.length}/${results.length} mises à jour réussies`,
+      results,
+    })
+  }
+
+  // ── links ───────────────────────────────────────────────────────────────────
+  // Usage: node framer_helper.js links
+  // Retourne { slug: external_url } pour tous les items qui ont un champ link rempli.
+  // Utilisé par l'endpoint Railway GET /archi-news-links pour le redirect dynamique.
+  if (command === "links") {
+    const LINK_FIELD = "MHz47j4CF"
+    try {
+      const items = await collection.getItems()
+      const links = {}
+      for (const item of items) {
+        const fd = item.fieldData || {}
+        const url = fd[LINK_FIELD]?.value
+        if (item.slug && url && url !== "null") {
+          links[item.slug] = url
+        }
+      }
+      return ok({ links, count: Object.keys(links).length })
+    } catch (e) {
+      return err(`links error: ${e.message}`)
+    }
+  }
+
+  return err(`Commande inconnue: ${command}. Disponibles: schema, list, create, update, batch-update, delete, links`)
 }
 
 main().catch(e => err(e.message))

@@ -564,6 +564,49 @@ async def stream_logs(
     )
 
 
+# ── Archi News Links — redirect dynamique ─────────────────────────────────────
+
+_archi_links_cache: dict = {}
+_archi_links_ts: float = 0.0
+_ARCHI_LINKS_TTL = 300  # 5 minutes
+
+@app.get("/archi-news-links")
+async def archi_news_links():
+    """
+    Retourne { slug: external_url } pour tous les articles Architecture-Blog.
+    Utilisé par le script custom Framer pour rediriger /archi/archi-news/:slug
+    vers la source externe (ArchDaily, Azure, Archello, etc.).
+    Mis en cache 5 minutes. Aucune auth requise (données publiques).
+    """
+    global _archi_links_cache, _archi_links_ts
+
+    now = time.time()
+    if _archi_links_cache and (now - _archi_links_ts) < _ARCHI_LINKS_TTL:
+        return _archi_links_cache
+
+    import subprocess, json as _json, pathlib
+    helper = pathlib.Path(__file__).parent / "framer_helper.js"
+    node   = "/usr/local/bin/node"
+    env    = {**os.environ, "FRAMER_COLLECTION_ID": "QN2U_mvQ4"}
+
+    try:
+        result = subprocess.run(
+            [node, str(helper), "links"],
+            capture_output=True, text=True, env=env,
+            cwd=str(helper.parent), timeout=30,
+        )
+        data = _json.loads(result.stdout.strip())
+        if data.get("ok") and "links" in data:
+            _archi_links_cache = data["links"]
+            _archi_links_ts    = now
+            return _archi_links_cache
+    except Exception as e:
+        log.error(f"archi-news-links: {e}")
+
+    # Fallback: cache précédent ou dict vide
+    return _archi_links_cache or {}
+
+
 @app.post("/webhook/telegram")
 async def telegram_notify(payload: dict, _=Depends(verify_secret)):
     """
