@@ -174,15 +174,38 @@ def _build_md_file(url: str, markdown: str, metadata: dict, crawl_date: str, sit
     slug = _url_to_filename(url)
     page_type = _classify_url(url)
 
+    # ── Titre canonique ────────────────────────────────────────────────────────
+    # Framer met les titres hero dans des <div> CSS, pas des <h1>.
+    # Si le vrai <h1> détecté est un long paragraphe (>120 chars), il est
+    # probablement du body text, pas le titre visuel. On préfère le title_tag.
+    h1_detected = metadata.get("h1", "")
+    title_tag   = metadata.get("title_tag", "")
+
+    if h1_detected and len(h1_detected) <= 120:
+        page_title = h1_detected          # H1 court = vrai titre
+    elif title_tag:
+        # Nettoyer le title_tag (souvent "Titre | Welldone Studio")
+        page_title = re.split(r"\s*[\|–—]\s*(?:Welldone|Studio|Archi)", title_tag)[0].strip()
+    else:
+        page_title = h1_detected          # fallback
+
     frontmatter = (
         f"---\n"
         f"url: {url}\n"
         f"type: {page_type}\n"
         f"site: {site}\n"
         f"slug: {slug}\n"
+        f"title: {page_title}\n"
         f"crawl_date: {crawl_date}\n"
         f"---\n\n"
     )
+
+    # Injecter le titre propre en H1 si le markdown n'en a pas déjà un correct
+    first_h1 = re.search(r"^# (.+)$", markdown, re.MULTILINE)
+    if page_title and (not first_h1 or len(first_h1.group(1)) > 120):
+        # Retirer le H1 trop long existant et injecter le bon
+        markdown = re.sub(r"^# .{121,}$\n?", "", markdown, count=1, flags=re.MULTILINE)
+        markdown = f"# {page_title}\n\n" + markdown.lstrip()
 
     meta_section = "\n\n---\n**Métadonnées crawl**\n"
     if metadata.get("h1"):
