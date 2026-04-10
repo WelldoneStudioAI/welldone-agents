@@ -1453,6 +1453,8 @@ class EmailAgent(BaseAgent):
             await notify("\n".join(lines))
 
         log.info(f"email.auto_trier: {len(kept)} gardés, {archived_count} archivés")
+        if not kept:
+            return ""  # Archivage silencieux, pas de notification
         return f"auto_trier: {len(kept)} importants, {archived_count} → Archives"
 
 
