@@ -166,7 +166,10 @@ URGENCY_LABELS = {
 # ── Heuristiques de pré-filtrage ──────────────────────────────────────────────
 BULK_HEADERS = ["list-unsubscribe", "list-id", "precedence"]
 BULK_SENDERS = ["newsletter@", "no-reply@", "noreply@", "updates@", "marketing@",
-                "notifications@", "donotreply@", "info@mailchimp", "bounce@"]
+                "notifications@", "donotreply@", "info@mailchimp", "bounce@",
+                "notification.compte@bell", "alertes", "alerte@", "notification@",
+                "nepasrepondre", "ne-pas-repondre", "courriel@desjardins",
+                "notification@desjardins", "info@desjardins"]
 BULK_SUBJECT_WORDS = [
     "sale", "offer", "save now", "deals", "newsletter", "digest",
     "weekly update", "industry report", "product news", "unsubscribe",
@@ -1358,7 +1361,7 @@ class EmailAgent(BaseAgent):
             all_kept: list[tuple] = []   # (uid, from, subject, account_label)
             total_archived = 0
             today_str = datetime.now().strftime("%Y-%m-%d")
-            since_date = (datetime.now() - timedelta(hours=48)).strftime("%d-%b-%Y")
+            since_date = datetime.now().strftime("%d-%b-%Y")  # Depuis minuit aujourd'hui seulement
 
             for host, port, user, password, label in _ALL_ACCOUNTS:
                 M = _connect_account(host, port, user, password)
@@ -1443,9 +1446,16 @@ class EmailAgent(BaseAgent):
             def _md(s: str) -> str:
                 return s.replace("_", "\\_").replace("*", "\\*").replace("[", "\\[").replace("`", "\\`")
 
-            lines = [f"📬 *{len(kept)} nouveau(x) email(s) important(s)*\n"]
+            now_str = datetime.now().strftime("%H:%M")
+            lines = [f"📬 *{len(kept)} nouveau(x) email(s) important(s)* — {now_str}\n"]
             for uid_s, from_raw, subject, acct in kept[:5]:
-                lines.append(f"• [{acct}] {_md(from_raw[:45])}\n  _{_md(subject[:60])}_")
+                # Extraire juste le nom (avant <email>)
+                name = re.sub(r"\s*<[^>]+>", "", from_raw).strip() or from_raw[:40]
+                # Sujet vide ou juste "RE:" → label lisible
+                subj_display = subject.strip()
+                if not subj_display or subj_display.upper() in ("RE:", "FW:", "FWD:", "TR:"):
+                    subj_display = "(réponse sans sujet)"
+                lines.append(f"• {_md(name[:40])} — _{_md(subj_display[:70])}_")
             if len(kept) > 5:
                 lines.append(f"_...et {len(kept) - 5} autres_")
             if archived_count:
