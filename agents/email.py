@@ -1440,9 +1440,12 @@ class EmailAgent(BaseAgent):
 
         if kept:
             from core.telegram_notifier import notify
+            def _md(s: str) -> str:
+                return s.replace("_", "\\_").replace("*", "\\*").replace("[", "\\[").replace("`", "\\`")
+
             lines = [f"📬 *{len(kept)} nouveau(x) email(s) important(s)*\n"]
             for uid_s, from_raw, subject, acct in kept[:5]:
-                lines.append(f"• [{acct}] {from_raw[:45]}\n  _{subject[:60]}_")
+                lines.append(f"• [{acct}] {_md(from_raw[:45])}\n  _{_md(subject[:60])}_")
             if len(kept) > 5:
                 lines.append(f"_...et {len(kept) - 5} autres_")
             if archived_count:
