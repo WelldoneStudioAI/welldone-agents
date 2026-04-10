@@ -536,11 +536,18 @@ class EmailAgent(BaseAgent):
     schedules = [
         {
             "id":     "email_auto_trier",
-            "cron":   "*/5 * * * *",   # toutes les 5 minutes — leads entrants
+            "cron":   "*/5 * * * *",   # toutes les 5 minutes — triage silencieux
             "command": "auto_trier",
             "context": {},
             "label":  "Triage email toutes les 5 min",
-        }
+        },
+        {
+            "id":     "email_relance_checker",
+            "cron":   "0 * * * *",     # toutes les heures — suivi sans réponse
+            "command": "relance_checker",
+            "context": {},
+            "label":  "Relance emails sans réponse (horaire)",
+        },
     ]
 
     @property
@@ -559,6 +566,7 @@ class EmailAgent(BaseAgent):
             "construire_whitelist": self.construire_whitelist,
             "trier_boite":          self.trier_boite,
             "auto_trier":           self.auto_trier,
+            "relance_checker":      self.relance_checker,
         }
 
     # ── TRIER — commande principale ───────────────────────────────────────────
@@ -1395,11 +1403,11 @@ class EmailAgent(BaseAgent):
 
                             acct_processed[uid_s] = today_str   # marquer traité
 
-                            if any(d in sender for d in self._CRITICAL_DOMAINS):
-                                kept.append((uid_s, from_raw, subject, label))
-                            elif sender in _KNOWN_CONTACTS:
-                                kept.append((uid_s, from_raw, subject, label))
-                            elif _is_direct_french(msg):
+                            is_known = (
+                                any(d in sender for d in self._CRITICAL_DOMAINS)
+                                or sender in _KNOWN_CONTACTS
+                            )
+                            if is_known:
                                 kept.append((uid_s, from_raw, subject, label))
                             else:
                                 to_archive.append(uid_s)
@@ -1441,31 +1449,150 @@ class EmailAgent(BaseAgent):
             log.info("email.auto_trier: aucun nouveau message")
             return ""  # Retour vide = pas de notification Telegram (évite le spam)
 
-        if kept:
-            from core.telegram_notifier import notify
-            def _md(s: str) -> str:
-                return s.replace("_", "\\_").replace("*", "\\*").replace("[", "\\[").replace("`", "\\`")
-
-            now_str = datetime.now().strftime("%H:%M")
-            lines = [f"📬 *{len(kept)} nouveau(x) email(s) important(s)* — {now_str}\n"]
-            for uid_s, from_raw, subject, acct in kept[:5]:
-                # Extraire juste le nom (avant <email>)
-                name = re.sub(r"\s*<[^>]+>", "", from_raw).strip() or from_raw[:40]
-                # Sujet vide ou juste "RE:" → label lisible
-                subj_display = subject.strip()
-                if not subj_display or subj_display.upper() in ("RE:", "FW:", "FWD:", "TR:"):
-                    subj_display = "(réponse sans sujet)"
-                lines.append(f"• {_md(name[:40])} — _{_md(subj_display[:70])}_")
-            if len(kept) > 5:
-                lines.append(f"_...et {len(kept) - 5} autres_")
-            if archived_count:
-                lines.append(f"\n📁 {archived_count} déplacé(s) → Archives")
-            await notify("\n".join(lines))
-
         log.info(f"email.auto_trier: {len(kept)} gardés, {archived_count} archivés")
-        if not kept:
-            return ""  # Archivage silencieux, pas de notification
-        return f"auto_trier: {len(kept)} importants, {archived_count} → Archives"
+        return ""  # Triage silencieux — Apple Mail notifie à l'arrivée, relance_checker pour le suivi
+
+    async def relance_checker(self, ctx: dict | None = None) -> str:
+        """
+        Vérifie toutes les heures si des emails importants dans INBOX
+        sont restés sans réponse depuis plus de 60 minutes.
+        Notifie via Telegram uniquement dans ce cas.
+        """
+        _RELANCE_FILE = Path("/tmp/email_relance_notified.json")
+        DELAY_MINUTES = 60
+
+        def _load_notified() -> set:
+            try:
+                if _RELANCE_FILE.exists():
+                    data = json.loads(_RELANCE_FILE.read_text())
+                    # TTL 24h — purger les vieilles entrées
+                    cutoff = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M")
+                    return {k for k, v in data.items() if v > cutoff}
+            except Exception:
+                pass
+            return set()
+
+        def _save_notified(notified: set) -> None:
+            try:
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+                data = {uid: now_str for uid in notified}
+                _RELANCE_FILE.write_text(json.dumps(data))
+            except Exception:
+                pass
+
+        def _has_replied(M_sent, msg_id: str) -> bool:
+            """Vérifie si JP a répondu à cet email (cherche dans Sent)."""
+            if not msg_id:
+                return False
+            try:
+                for folder in ["Sent", "INBOX.Sent", "Sent Messages"]:
+                    try:
+                        M_sent.select(folder, readonly=True)
+                        typ, data = M_sent.uid("search", None, f'HEADER In-Reply-To "{msg_id}"')
+                        if data and data[0]:
+                            return True
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            return False
+
+        def _run():
+            notified = _load_notified()
+            unreplied: list[tuple] = []
+            cutoff_dt = datetime.now() - timedelta(minutes=DELAY_MINUTES)
+
+            for host, port, user, password, label in _ALL_ACCOUNTS:
+                M = _connect_account(host, port, user, password)
+                if M is None:
+                    continue
+                try:
+                    M.select("INBOX", readonly=True)
+                    typ, data = M.uid("search", None, "ALL")
+                    all_uids = data[0].split() if data[0] else []
+
+                    for uid_b in all_uids:
+                        uid_s = uid_b.decode() if isinstance(uid_b, bytes) else str(uid_b)
+                        uid_key = f"{label}:{uid_s}"
+                        if uid_key in notified:
+                            continue
+
+                        try:
+                            typ2, msg_data = M.uid("fetch", uid_s, "(RFC822.HEADER)")
+                            if not msg_data or not isinstance(msg_data[0], tuple):
+                                continue
+                            msg = email.message_from_bytes(msg_data[0][1])
+
+                            # Vérifier l'âge
+                            date_str = msg.get("Date", "")
+                            try:
+                                from email.utils import parsedate_to_datetime
+                                msg_dt = parsedate_to_datetime(date_str)
+                                msg_dt = msg_dt.replace(tzinfo=None)
+                            except Exception:
+                                continue
+                            if msg_dt > cutoff_dt:
+                                continue  # Trop récent
+
+                            from_raw = _decode(msg.get("From", ""))
+                            subject  = _decode(msg.get("Subject", "(sans sujet)"))
+                            m_match  = re.search(r"<([^>]+)>", from_raw)
+                            sender   = m_match.group(1).lower() if m_match else from_raw.strip().lower()
+
+                            # Ignorer les bulk/propres propres addresses
+                            if _is_bulk_by_sender(from_raw) or _is_bulk_by_headers(str(msg)):
+                                notified.add(uid_key)
+                                continue
+
+                            # Vérifier si répondu
+                            msg_id = msg.get("Message-ID", "").strip()
+                            if _has_replied(M, msg_id):
+                                notified.add(uid_key)
+                                continue
+
+                            name = re.sub(r"\s*<[^>]+>", "", from_raw).strip() or from_raw[:40]
+                            subj = subject.strip() or "(sans sujet)"
+                            unreplied.append((uid_key, name, subj, label))
+                        except Exception as e:
+                            log.warning(f"relance_checker fetch {uid_s}: {e}")
+                            continue
+
+                    notified.update(uid_key for uid_key, *_ in unreplied if uid_key not in notified)
+                except Exception as e:
+                    log.warning(f"relance_checker {label}: {e}")
+                finally:
+                    try:
+                        M.logout()
+                    except Exception:
+                        pass
+
+            _save_notified(notified)
+            return unreplied
+
+        try:
+            unreplied = await asyncio.get_event_loop().run_in_executor(None, _run)
+        except Exception as e:
+            log.error(f"email.relance_checker: {e}")
+            return ""
+
+        if not unreplied:
+            log.info("email.relance_checker: aucun email en attente de réponse")
+            return ""
+
+        from core.telegram_notifier import notify
+
+        def _md(s: str) -> str:
+            return s.replace("_", "\\_").replace("*", "\\*").replace("[", "\\[").replace("`", "\\`")
+
+        lines = [f"⏰ *{len(unreplied)} email(s) sans réponse depuis +{DELAY_MINUTES} min*\n"]
+        for uid_key, name, subject, label in unreplied[:5]:
+            lines.append(f"• {_md(name[:40])} — _{_md(subject[:70])}_")
+        if len(unreplied) > 5:
+            lines.append(f"_...et {len(unreplied) - 5} autres_")
+
+        await notify("\n".join(lines))
+        log.info(f"email.relance_checker: {len(unreplied)} email(s) notifiés")
+        return ""
 
 
 # ── Instance globale ──────────────────────────────────────────────────────────
