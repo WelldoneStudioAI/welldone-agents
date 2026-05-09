@@ -299,6 +299,72 @@ def _connect_account(host: str, port: int, user: str, password: str) -> imaplib.
         return None
 
 
+# ── Détection HOT email (notif Telegram) ──────────────────────────────────────
+# Pattern: matche "Jean-Philippe", "Jean Philippe", "JP", "Jp" avec word boundaries.
+# \b empêche les false positives type JPMorgan, JPEG, jpeg, codes "JP-2024".
+_NAME_PATTERN = re.compile(
+    r"\b(?:jean[\s\-]philippe|jp)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _get_body_text(msg) -> str:
+    """Extrait le body en texte plain pour analyse de contenu."""
+    parts = []
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() == "text/plain":
+                try:
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        charset = part.get_content_charset() or "utf-8"
+                        parts.append(payload.decode(charset, errors="replace"))
+                except Exception:
+                    pass
+    else:
+        try:
+            payload = msg.get_payload(decode=True)
+            if payload:
+                charset = msg.get_content_charset() or "utf-8"
+                parts.append(payload.decode(charset, errors="replace"))
+        except Exception:
+            pass
+    return "\n".join(parts)
+
+
+def _is_hot_email(msg, sender: str, lead_domains: tuple[str, ...]) -> tuple[bool, str]:
+    """
+    Détermine si un email mérite une notification Telegram.
+    Retourne (is_hot, reason). Évalue 4 critères en cascade :
+      ① sender ∈ whitelist (105 contacts)
+      ② To/Cc contient ia@* (automatisation interne)
+      ③ sender domain ∈ lead_domains (RDV ou formulaire site)
+      ④ subject ou body contient "Jean-Philippe" | "JP" | "Jp"
+    """
+    # ① Whitelist
+    if sender in _KNOWN_CONTACTS:
+        return True, "contact connu"
+
+    # ② Adresse de destination = ia@* (Cloudflare préserve le To: original)
+    to_field = (msg.get("To", "") + " " + msg.get("Cc", "") + " " + msg.get("Delivered-To", "")).lower()
+    if "ia@" in to_field:
+        return True, "automatisation IA"
+
+    # ③ Sender ∈ lead domains (cal/calendly/awelldone/framer)
+    if any(d in sender for d in lead_domains):
+        return True, "lead automatique (RDV ou formulaire)"
+
+    # ④ Prénom dans subject ou body (référé qui parle par prénom)
+    subject = _decode(msg.get("Subject", ""))
+    if _NAME_PATTERN.search(subject):
+        return True, "prénom dans sujet"
+    body = _get_body_text(msg)
+    if _NAME_PATTERN.search(body):
+        return True, "prénom dans body (référé)"
+
+    return False, ""
+
+
 def _fetch_inbox_emails(host: str, port: int, user: str, password: str,
                         label: str, limit: int, unseen_only: bool) -> list[dict]:
     """Récupère les emails d'un compte IMAP et les retourne avec le label du compte."""
@@ -1342,15 +1408,13 @@ class EmailAgent(BaseAgent):
 
     # ── AUTO TRIER — triage horaire automatique ───────────────────────────────
 
-    # Expéditeurs critiques qui ne doivent JAMAIS atterrir en Archives
-    _CRITICAL_DOMAINS = (
-        # Réservations / rendez-vous
+    # Domaines = leads entrants vivants → notif Telegram immédiate.
+    # NB: stripe/paypal/quickbooks/docusign/hellosign/pandadoc retirés intentionnellement
+    # (factures et contrats arrivent dans Archive comme le reste — JP les browse quand il a le temps).
+    _LEAD_DOMAINS = (
+        # Réservations / rendez-vous (= lead à appeler ou préparer)
         "cal.com", "calendly.com", "acuityscheduling.com",
-        # Paiements / facturation
-        "quickbooks.intuit.com", "stripe.com", "paypal.com",
-        # Contrats
-        "docusign.com", "hellosign.com", "pandadoc.com",
-        # ⚡ Formulaires site web — TOUJOURS alerter (leads entrants)
+        # Formulaires site web (= lead remplit form)
         "awelldone.studio", "awelldone.com",
         "framer.com", "framerusercontent.com",
     )
@@ -1375,7 +1439,10 @@ class EmailAgent(BaseAgent):
             all_kept: list[tuple] = []   # (uid, from, subject, account_label)
             total_archived = 0
             today_str = datetime.now().strftime("%Y-%m-%d")
-            since_date = datetime.now().strftime("%d-%b-%Y")  # Depuis minuit aujourd'hui seulement
+            # Fenêtre de 7 jours pour rattraper progressivement les vieux emails non-HOT
+            # qui squattent INBOX (genre Pinterest reçu hier). Le filtre processed_uids
+            # empêche de re-traiter ceux déjà vus.
+            since_date = (datetime.now() - timedelta(days=7)).strftime("%d-%b-%Y")
 
             for host, port, user, password, label in _ALL_ACCOUNTS:
                 M = _connect_account(host, port, user, password)
@@ -1409,12 +1476,10 @@ class EmailAgent(BaseAgent):
 
                             acct_processed[uid_s] = today_str   # marquer traité
 
-                            is_known = (
-                                any(d in sender for d in self._CRITICAL_DOMAINS)
-                                or sender in _KNOWN_CONTACTS
-                            )
-                            if is_known:
-                                kept.append((uid_s, from_raw, subject, label))
+                            # Évaluation HOT (4 critères : whitelist, ia@*, lead domain, prénom)
+                            is_hot, reason = _is_hot_email(msg, sender, self._LEAD_DOMAINS)
+                            if is_hot:
+                                kept.append((uid_s, from_raw, subject, label, reason))
                             else:
                                 to_archive.append(uid_s)
                         except Exception as e:
@@ -1455,8 +1520,27 @@ class EmailAgent(BaseAgent):
             log.info("email.auto_trier: aucun nouveau message")
             return ""  # Retour vide = pas de notification Telegram (évite le spam)
 
-        log.info(f"email.auto_trier: {len(kept)} gardés, {archived_count} archivés")
-        return ""  # Triage silencieux — Apple Mail notifie à l'arrivée, relance_checker pour le suivi
+        log.info(f"email.auto_trier: {len(kept)} HOT, {archived_count} archivés")
+
+        # Si aucun HOT → silencieux (les archives ne dérangent pas)
+        if not kept:
+            return ""
+
+        # Construire la notif Telegram avec la liste des HOT (groupés par raison)
+        # Format : `🔔 *3 emails* — Robert Dupont · Maxime Walter (contact connu) + 1 autre`
+        lines = [f"🔔 *{len(kept)} email(s) à voir*"]
+        # Limiter à 10 dans la notif pour pas spammer
+        for uid_s, from_raw, subject, label, reason in kept[:10]:
+            sender_display = (from_raw[:55] + "…") if len(from_raw) > 55 else from_raw
+            subj_display = (subject[:60] + "…") if len(subject) > 60 else subject
+            # Échapper Markdown problématique (* _ [ `)
+            sender_clean = sender_display.replace("*", "").replace("_", "").replace("[", "(").replace("]", ")").replace("`", "'")
+            subj_clean = subj_display.replace("*", "").replace("_", "").replace("[", "(").replace("]", ")").replace("`", "'")
+            lines.append(f"• _{reason}_ — {sender_clean}\n   {subj_clean}")
+        if len(kept) > 10:
+            lines.append(f"_...+{len(kept) - 10} autre(s)_")
+
+        return "\n".join(lines)
 
     async def relance_checker(self, ctx: dict | None = None) -> str:
         """
@@ -1524,7 +1608,9 @@ class EmailAgent(BaseAgent):
                             continue
 
                         try:
-                            typ2, msg_data = M.uid("fetch", uid_s, "(RFC822.HEADER)")
+                            # Fetch full RFC822 (body inclus) pour permettre _is_hot_email
+                            # de scanner le body pour le critère prénom.
+                            typ2, msg_data = M.uid("fetch", uid_s, "(RFC822)")
                             if not msg_data or not isinstance(msg_data[0], tuple):
                                 continue
                             msg = email.message_from_bytes(msg_data[0][1])
@@ -1547,6 +1633,14 @@ class EmailAgent(BaseAgent):
 
                             # Ignorer les bulk/propres propres addresses
                             if _is_bulk_by_sender(from_raw) or _is_bulk_by_headers(str(msg)):
+                                notified.add(uid_key)
+                                continue
+
+                            # NOUVEAU : ne notifier QUE pour les emails HOT.
+                            # Défense en profondeur : si auto_trier a oublié d'archiver
+                            # un email non-HOT (Pinterest etc.), relance_checker ne le notifie pas non plus.
+                            is_hot, _reason = _is_hot_email(msg, sender, EmailAgent._LEAD_DOMAINS)
+                            if not is_hot:
                                 notified.add(uid_key)
                                 continue
 
