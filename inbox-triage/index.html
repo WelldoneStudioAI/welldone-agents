@@ -2,347 +2,487 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📬 Inbox Triage — Welldone</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Inbox Triage">
+<meta name="theme-color" content="#000000">
+<title>Inbox Triage</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
-    --bg:       #0A0A0A;
-    --bg2:      #131313;
-    --bg3:      #1C1C1C;
-    --bg4:      #252525;
-    --border:   #2A2A2A;
-    --text:     #F0F0F0;
-    --muted:    #888888;
-    --dim:      #555555;
-    --green:    #4ADE80;
-    --green-bg: #134e2c;
-    --yellow:   #FBBF24;
-    --yellow-bg:#5c4310;
-    --red:      #F87171;
-    --red-bg:   #5c1a1a;
-    --blue:     #60A5FA;
-    --radius:   8px;
+    --safe-top:    env(safe-area-inset-top);
+    --safe-bot:    env(safe-area-inset-bottom);
+    --safe-left:   env(safe-area-inset-left);
+    --safe-right:  env(safe-area-inset-right);
+
+    --text:        rgba(255, 255, 255, 0.95);
+    --text-2:      rgba(255, 255, 255, 0.65);
+    --text-3:      rgba(255, 255, 255, 0.45);
+
+    --glass:       rgba(255, 255, 255, 0.06);
+    --glass-2:     rgba(255, 255, 255, 0.10);
+    --glass-3:     rgba(255, 255, 255, 0.14);
+    --glass-line:  rgba(255, 255, 255, 0.12);
+
+    --green:       #34C759;
+    --green-bg:    rgba(52, 199, 89, 0.18);
+    --yellow:      #FF9F0A;
+    --yellow-bg:   rgba(255, 159, 10, 0.18);
+    --red:         #FF453A;
+    --red-bg:      rgba(255, 69, 58, 0.18);
+    --blue:        #0A84FF;
+    --blue-bg:     rgba(10, 132, 255, 0.18);
+    --pink:        #FF375F;
+    --purple:      #BF5AF2;
+
+    --r-card:      24px;
+    --r-pill:      999px;
+    --r-btn:       16px;
+    --r-sheet:     32px;
   }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+
   html, body {
-    background: var(--bg);
+    background: transparent;
     color: var(--text);
-    font-family: 'Inter', -apple-system, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro', 'Inter', system-ui, sans-serif;
     font-weight: 400;
-    line-height: 1.5;
-    min-height: 100vh;
-  }
-  .topbar {
-    border-bottom: 1px solid var(--border);
-    padding: 16px 24px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    background: var(--bg2);
-  }
-  .topbar h1 {
-    font-size: 14px;
-    font-weight: 600;
-    letter-spacing: 0.3px;
-  }
-  .topbar h1 .emoji { margin-right: 6px; }
-  .topbar .meta {
-    color: var(--muted);
-    font-size: 12px;
-    display: flex;
-    gap: 16px;
-    align-items: center;
-  }
-  .topbar button.refresh {
-    background: var(--bg3);
-    color: var(--text);
-    border: 1px solid var(--border);
-    padding: 6px 14px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 12px;
-    font-weight: 500;
-  }
-  .topbar button.refresh:hover { background: var(--bg4); border-color: #444; }
-
-  main {
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 24px;
-  }
-  .empty {
-    text-align: center;
-    padding: 80px 24px;
-    color: var(--muted);
-  }
-  .empty .big { font-size: 48px; margin-bottom: 16px; }
-  .empty .text { font-size: 14px; }
-
-  .email {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px 18px;
-    margin-bottom: 12px;
-    transition: border-color 0.15s;
-  }
-  .email:hover { border-color: #3a3a3a; }
-  .email.snoozing { opacity: 0.4; transition: opacity 0.4s; }
-  .email .header {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 16px;
-    margin-bottom: 4px;
-  }
-  .email .from {
-    font-weight: 600;
-    font-size: 14px;
-    color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1;
-    min-width: 0;
-  }
-  .email .meta-line {
-    color: var(--muted);
-    font-size: 11px;
-    white-space: nowrap;
-    display: flex;
-    gap: 10px;
-    align-items: center;
-  }
-  .email .badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 10px;
-    font-weight: 500;
-    letter-spacing: 0.2px;
-    text-transform: uppercase;
-  }
-  .email .badge.host { background: #1e3a5f; color: #93c5fd; }
-  .email .badge.gmail { background: #4d1d1d; color: #fca5a5; }
-  .email .badge.reason { background: var(--bg4); color: var(--muted); text-transform: none; }
-
-  .email .subject {
-    font-size: 14px;
-    color: var(--text);
-    margin-bottom: 6px;
-    font-weight: 500;
-  }
-  .email .snippet {
-    font-size: 13px;
-    color: var(--muted);
-    margin-bottom: 12px;
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
     line-height: 1.4;
+    min-height: 100vh;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
-  .actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-  .btn {
-    background: var(--bg3);
-    color: var(--text);
-    border: 1px solid var(--border);
-    padding: 7px 13px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 12px;
-    font-weight: 500;
-    transition: all 0.15s;
-  }
-  .btn:hover { background: var(--bg4); }
-  .btn:disabled { opacity: 0.4; cursor: wait; }
-  .btn.green { border-color: var(--green); color: var(--green); }
-  .btn.green:hover { background: var(--green-bg); }
-  .btn.yellow { border-color: var(--yellow); color: var(--yellow); }
-  .btn.yellow:hover { background: var(--yellow-bg); }
-  .btn.red { border-color: var(--red); color: var(--red); }
-  .btn.red:hover { background: var(--red-bg); }
-  .btn.snooze { border-color: var(--dim); color: var(--muted); margin-left: auto; }
-  .btn.snooze:hover { background: var(--bg4); color: var(--text); }
 
-  /* Modal pour le draft généré */
-  .modal-overlay {
+  /* Background ambient — blobs floue colorés (style iOS Control Center) */
+  .bg-stage {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.7);
-    display: none;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-    z-index: 100;
-    backdrop-filter: blur(4px);
-  }
-  .modal-overlay.show { display: flex; }
-  .modal {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    max-width: 720px;
-    width: 100%;
-    max-height: 90vh;
+    z-index: -10;
     overflow: hidden;
-    display: flex;
-    flex-direction: column;
+    background: linear-gradient(180deg, #0c0a14 0%, #050505 100%);
   }
-  .modal-header {
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+  .blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(90px);
+    opacity: 0.55;
+    animation: blob 24s ease-in-out infinite;
   }
-  .modal-header h2 {
-    font-size: 14px;
-    font-weight: 600;
+  .blob.b1 { width: 540px; height: 540px; background: #6366F1; top: -180px; left: -120px; animation-delay: 0s; }
+  .blob.b2 { width: 460px; height: 460px; background: #EC4899; top: 30%;  right: -180px; animation-delay: -8s; }
+  .blob.b3 { width: 600px; height: 600px; background: #06B6D4; bottom: -260px; left: 40%; animation-delay: -16s; }
+  @keyframes blob {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    33% { transform: translate(40px, -30px) scale(1.05); }
+    66% { transform: translate(-30px, 30px) scale(0.95); }
   }
-  .modal-header .mode-tag {
-    padding: 3px 10px;
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+
+  /* Topbar glass */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(8, 8, 10, 0.55);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    padding: calc(var(--safe-top) + 14px) 16px 14px;
+    border-bottom: 0.5px solid var(--glass-line);
   }
-  .modal-header .close {
-    background: transparent;
-    border: none;
-    color: var(--muted);
-    font-size: 22px;
-    cursor: pointer;
-    padding: 0 8px;
-  }
-  .modal-body {
-    padding: 20px;
-    overflow-y: auto;
-    flex: 1;
-  }
-  .modal-body .meta {
-    color: var(--muted);
-    font-size: 12px;
-    margin-bottom: 14px;
-  }
-  .modal-body textarea {
-    width: 100%;
-    min-height: 200px;
-    background: var(--bg);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 14px;
-    font-family: inherit;
-    font-size: 14px;
-    line-height: 1.6;
-    resize: vertical;
-  }
-  .modal-footer {
-    padding: 14px 20px;
-    border-top: 1px solid var(--border);
+  .topbar-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 12px;
   }
-  .modal-footer .open-gmail {
-    background: var(--green-bg);
-    color: var(--green);
-    border: 1px solid var(--green);
-    padding: 9px 16px;
-    border-radius: 6px;
+  .topbar h1 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+  }
+  .topbar .count {
+    font-size: 13px;
+    color: var(--text-2);
+    margin-top: 2px;
+    font-weight: 500;
+  }
+  .icon-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--glass-2);
+    border: 0.5px solid var(--glass-line);
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    font-size: 18px;
+    transition: transform 0.15s, background 0.15s;
+  }
+  .icon-btn:active { transform: scale(0.92); background: var(--glass-3); }
+  .icon-btn.spinning svg { animation: spin 0.6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  main {
+    padding: 16px;
+    padding-bottom: calc(var(--safe-bot) + 24px);
+    max-width: 720px;
+    margin: 0 auto;
+  }
+
+  /* Empty / loading states */
+  .state {
+    text-align: center;
+    padding: 80px 16px;
+    color: var(--text-2);
+  }
+  .state .ico { font-size: 56px; margin-bottom: 16px; opacity: 0.7; }
+  .state .text { font-size: 15px; }
+
+  /* Email card — Liquid Glass */
+  .card {
+    background: var(--glass);
+    backdrop-filter: blur(50px) saturate(180%);
+    -webkit-backdrop-filter: blur(50px) saturate(180%);
+    border: 0.5px solid var(--glass-line);
+    border-radius: var(--r-card);
+    padding: 16px;
+    margin-bottom: 12px;
+    position: relative;
+    overflow: hidden;
+    transition: opacity 0.4s, transform 0.3s;
+  }
+  .card.snoozing {
+    opacity: 0;
+    transform: translateX(80px);
+  }
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+  }
+
+  .card-meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+    align-items: center;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: -0.2px;
+    line-height: 1;
+  }
+  .pill.host  { background: var(--blue-bg);  color: var(--blue); }
+  .pill.gmail { background: var(--red-bg);   color: var(--red); }
+  .pill.reason { background: var(--glass-2); color: var(--text-2); font-weight: 500; }
+  .pill.time   { background: transparent; color: var(--text-3); font-weight: 500; padding: 4px 0; margin-left: auto; }
+
+  .card-from {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    letter-spacing: -0.2px;
+  }
+  .card-subject {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 6px;
+    line-height: 1.3;
+    letter-spacing: -0.3px;
+  }
+  .card-snippet {
+    font-size: 14px;
+    color: var(--text-2);
+    line-height: 1.4;
+    margin-bottom: 14px;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .card-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr) auto;
+    gap: 8px;
+  }
+
+  .pill-btn {
+    background: var(--glass-2);
+    border: 0.5px solid var(--glass-line);
+    color: var(--text);
+    padding: 11px 8px;
+    border-radius: var(--r-btn);
     cursor: pointer;
     font-family: inherit;
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
+    letter-spacing: -0.2px;
+    transition: all 0.15s;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-height: 44px;
+    white-space: nowrap;
+  }
+  .pill-btn:active { transform: scale(0.96); }
+  .pill-btn:disabled { opacity: 0.4; cursor: wait; }
+  .pill-btn.green  { background: var(--green-bg);  color: var(--green);  border-color: rgba(52, 199, 89, 0.25); }
+  .pill-btn.yellow { background: var(--yellow-bg); color: var(--yellow); border-color: rgba(255, 159, 10, 0.25); }
+  .pill-btn.red    { background: var(--red-bg);    color: var(--red);    border-color: rgba(255, 69, 58, 0.25); }
+  .pill-btn.snooze { width: 44px; padding: 0; color: var(--text-2); }
+
+  .pill-btn .label-mobile { display: none; }
+  @media (max-width: 420px) {
+    .pill-btn .label-full { display: none; }
+    .pill-btn .label-mobile { display: inline; }
+  }
+
+  /* Bottom sheet pour le draft généré */
+  .sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 99;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .sheet-backdrop.show { opacity: 1; pointer-events: auto; }
+
+  .sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 100;
+    background: rgba(20, 20, 25, 0.65);
+    backdrop-filter: blur(60px) saturate(180%);
+    -webkit-backdrop-filter: blur(60px) saturate(180%);
+    border-top-left-radius: var(--r-sheet);
+    border-top-right-radius: var(--r-sheet);
+    border-top: 0.5px solid var(--glass-line);
+    transform: translateY(100%);
+    transition: transform 0.4s cubic-bezier(0.32, 0.72, 0, 1);
+    max-height: 92vh;
+    display: flex;
+    flex-direction: column;
+    padding-bottom: var(--safe-bot);
+  }
+  .sheet.show { transform: translateY(0); }
+  .sheet-grabber {
+    width: 36px;
+    height: 5px;
+    background: rgba(255,255,255,0.3);
+    border-radius: 3px;
+    margin: 8px auto;
+  }
+  .sheet-header {
+    padding: 8px 20px 16px;
+    border-bottom: 0.5px solid var(--glass-line);
+  }
+  .sheet-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+  .sheet-title {
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+  }
+  .sheet-mode {
+    padding: 5px 12px;
+    border-radius: var(--r-pill);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: -0.1px;
+  }
+  .sheet-meta {
+    margin-top: 10px;
+    color: var(--text-2);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .sheet-meta strong { color: var(--text); font-weight: 600; }
+  .sheet-body {
+    padding: 16px 20px;
+    overflow-y: auto;
+    flex: 1;
+    -webkit-overflow-scrolling: touch;
+  }
+  .sheet-body textarea {
+    width: 100%;
+    min-height: 200px;
+    background: rgba(0,0,0,0.25);
+    color: var(--text);
+    border: 0.5px solid var(--glass-line);
+    border-radius: 18px;
+    padding: 16px;
+    font-family: inherit;
+    font-size: 15px;
+    line-height: 1.5;
+    resize: none;
+    outline: none;
+  }
+  .sheet-body textarea:focus { border-color: rgba(10, 132, 255, 0.6); background: rgba(10, 132, 255, 0.06); }
+
+  .sheet-footer {
+    padding: 12px 20px 16px;
+    border-top: 0.5px solid var(--glass-line);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .sheet-footer .open-gmail {
+    background: var(--blue);
+    color: white;
+    border: none;
+    padding: 14px 20px;
+    border-radius: var(--r-btn);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.3px;
     text-decoration: none;
-    display: inline-block;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 50px;
+    transition: transform 0.15s, opacity 0.15s;
   }
-  .modal-footer .open-gmail:hover { background: var(--green); color: var(--bg); }
-  .modal-footer .hint {
-    color: var(--muted);
+  .sheet-footer .open-gmail:active { transform: scale(0.97); opacity: 0.85; }
+  .sheet-footer .hint {
+    color: var(--text-3);
     font-size: 11px;
+    text-align: center;
+    line-height: 1.4;
   }
 
-  /* Loading state */
-  .loading-spinner {
-    display: inline-block;
-    width: 12px;
-    height: 12px;
-    border: 2px solid var(--bg4);
-    border-top-color: var(--text);
-    border-radius: 50%;
-    animation: spin 0.6s linear infinite;
-    margin-right: 6px;
-    vertical-align: middle;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* Toast */
+  /* Toast iOS-style */
   .toast {
     position: fixed;
-    bottom: 24px;
-    right: 24px;
-    background: var(--bg3);
+    top: calc(var(--safe-top) + 70px);
+    left: 50%;
+    transform: translateX(-50%) translateY(-30px);
+    background: rgba(28, 28, 30, 0.85);
+    backdrop-filter: blur(40px);
+    -webkit-backdrop-filter: blur(40px);
     color: var(--text);
-    padding: 12px 18px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
+    padding: 11px 18px;
+    border-radius: var(--r-pill);
+    border: 0.5px solid var(--glass-line);
     font-size: 13px;
+    font-weight: 500;
+    letter-spacing: -0.2px;
     z-index: 200;
-    transform: translateY(20px);
     opacity: 0;
-    transition: all 0.25s;
-    max-width: 360px;
+    transition: all 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+    max-width: calc(100vw - 32px);
+    text-align: center;
+    pointer-events: none;
   }
-  .toast.show { transform: translateY(0); opacity: 1; }
-  .toast.error { border-color: var(--red); color: var(--red); }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.error { color: var(--red); }
+
+  /* Spinner inline */
+  .spin-ico {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
+  /* Status bar fix mobile Safari */
+  @supports(padding: max(0px)) {
+    body { padding-top: 0; }
+  }
 </style>
 </head>
 <body>
 
+<div class="bg-stage">
+  <div class="blob b1"></div>
+  <div class="blob b2"></div>
+  <div class="blob b3"></div>
+</div>
+
 <div class="topbar">
-  <h1><span class="emoji">📬</span>Inbox Triage</h1>
-  <div class="meta">
-    <span id="status">—</span>
-    <button class="refresh" onclick="loadInbox()">↻ Refresh</button>
+  <div class="topbar-row">
+    <div>
+      <h1>Inbox</h1>
+      <div class="count" id="count">—</div>
+    </div>
+    <button class="icon-btn" id="refresh-btn" onclick="loadInbox(true)" aria-label="Refresh">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"></polyline>
+        <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"></path>
+      </svg>
+    </button>
   </div>
 </div>
 
-<main>
-  <div id="inbox"></div>
-</main>
+<main id="inbox"></main>
 
-<div class="modal-overlay" id="modal" onclick="if(event.target===this) closeModal()">
-  <div class="modal">
-    <div class="modal-header">
-      <div>
-        <h2 id="modal-title">Brouillon généré</h2>
-      </div>
-      <span class="mode-tag" id="modal-mode"></span>
-      <button class="close" onclick="closeModal()">×</button>
+<div class="sheet-backdrop" id="sheet-bd" onclick="closeSheet()"></div>
+<div class="sheet" id="sheet">
+  <div class="sheet-grabber"></div>
+  <div class="sheet-header">
+    <div class="sheet-header-row">
+      <div class="sheet-title">Brouillon</div>
+      <span class="sheet-mode" id="sheet-mode"></span>
     </div>
-    <div class="modal-body">
-      <div class="meta">
-        <strong>À :</strong> <span id="modal-to"></span><br>
-        <strong>Sujet :</strong> <span id="modal-subject"></span>
-      </div>
-      <textarea id="modal-text"></textarea>
+    <div class="sheet-meta">
+      <strong id="sheet-to"></strong><br>
+      <span id="sheet-subject" style="color: var(--text-2);"></span>
     </div>
-    <div class="modal-footer">
-      <span class="hint">Le brouillon est aussi dans Gmail Drafts. Modifie ici si besoin avant d'ouvrir Gmail.</span>
-      <a class="open-gmail" id="modal-open" target="_blank">Ouvrir dans Gmail →</a>
-    </div>
+  </div>
+  <div class="sheet-body">
+    <textarea id="sheet-text" placeholder="Brouillon généré…"></textarea>
+  </div>
+  <div class="sheet-footer">
+    <a class="open-gmail" id="sheet-open" target="_blank">
+      Ouvrir dans Gmail
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+    </a>
+    <div class="hint">Le brouillon est aussi dans Gmail Drafts<br>Tu peux le peaufiner ici avant d'ouvrir.</div>
   </div>
 </div>
 
@@ -350,59 +490,68 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-let CURRENT_EMAILS = [];
+let CURRENT = [];
 
-async function loadInbox() {
-  $("status").textContent = "Chargement…";
-  $("inbox").innerHTML = '<div class="empty"><div class="big">⏳</div><div class="text">Scan IMAP + Gmail…</div></div>';
+async function loadInbox(force = false) {
+  $("count").textContent = "Chargement…";
+  $("refresh-btn").classList.add("spinning");
+  if (force) $("inbox").innerHTML = `<div class="state"><div class="ico">⏳</div><div class="text">Scan IMAP + Gmail…</div></div>`;
   try {
-    const r = await fetch("/api/inbox");
+    const r = await fetch("/api/inbox" + (force ? "?force=1" : ""));
     const d = await r.json();
     if (d.error) throw new Error(d.error);
-    CURRENT_EMAILS = d.emails;
-    $("status").textContent = `${d.count} email(s) à traiter`;
+    CURRENT = d.emails;
+    updateCount();
     render(d.emails);
   } catch (e) {
-    $("status").textContent = "Erreur";
-    $("inbox").innerHTML = `<div class="empty"><div class="big">❌</div><div class="text">${e.message}</div></div>`;
+    $("count").textContent = "Erreur";
+    $("inbox").innerHTML = `<div class="state"><div class="ico">⚠️</div><div class="text">${esc(e.message)}</div></div>`;
+  } finally {
+    $("refresh-btn").classList.remove("spinning");
   }
+}
+
+function updateCount() {
+  const n = CURRENT.length;
+  $("count").textContent = n === 0 ? "Inbox vide" : `${n} email${n > 1 ? 's' : ''} à traiter`;
 }
 
 function render(emails) {
   if (!emails.length) {
-    $("inbox").innerHTML = '<div class="empty"><div class="big">🎉</div><div class="text">Inbox HOT vide. Tout est traité.</div></div>';
+    $("inbox").innerHTML = `<div class="state"><div class="ico">🌿</div><div class="text">Tout traité.<br>Bonne journée.</div></div>`;
     return;
   }
-  $("inbox").innerHTML = emails.map((e, i) => {
-    const dateShort = formatDate(e.date);
-    return `
-    <div class="email" id="email-${i}">
-      <div class="header">
-        <div class="from">${esc(e.from_raw)}</div>
-        <div class="meta-line">
-          <span class="badge ${e.account === 'Gmail' ? 'gmail' : 'host'}">${e.account}</span>
-          <span class="badge reason">${esc(e.reason)}</span>
-          <span>${dateShort}</span>
-        </div>
+  $("inbox").innerHTML = emails.map((e, i) => `
+    <div class="card" id="card-${i}">
+      <div class="card-meta-row">
+        <span class="pill ${e.account === 'Gmail' ? 'gmail' : 'host'}">${e.account === 'Gmail' ? 'Gmail' : 'Hostinger'}</span>
+        <span class="pill reason">${esc(e.reason)}</span>
+        <span class="pill time">${formatDate(e.date)}</span>
       </div>
-      <div class="subject">${esc(e.subject)}</div>
-      <div class="snippet">${esc(e.snippet)}</div>
-      <div class="actions">
-        <button class="btn green" onclick="genDraft(${i}, 'court')">🟢 Court & cordial</button>
-        <button class="btn yellow" onclick="genDraft(${i}, 'info')">🟡 Demande info</button>
-        <button class="btn red" onclick="genDraft(${i}, 'decline')">🔴 Décline</button>
-        <button class="btn snooze" onclick="snooze(${i})" title="Marquer comme traité">✓ Fait</button>
+      <div class="card-from">${esc(e.from_raw)}</div>
+      <div class="card-subject">${esc(e.subject)}</div>
+      <div class="card-snippet">${esc(e.snippet)}</div>
+      <div class="card-actions">
+        <button class="pill-btn green"  onclick="genDraft(${i}, 'court')">
+          <span class="label-full">Court</span><span class="label-mobile">🟢</span>
+        </button>
+        <button class="pill-btn yellow" onclick="genDraft(${i}, 'info')">
+          <span class="label-full">Info</span><span class="label-mobile">🟡</span>
+        </button>
+        <button class="pill-btn red"    onclick="genDraft(${i}, 'decline')">
+          <span class="label-full">Décline</span><span class="label-mobile">🔴</span>
+        </button>
+        <button class="pill-btn snooze" onclick="snooze(${i})" aria-label="Marquer fait">✓</button>
       </div>
-    </div>`;
-  }).join("");
+    </div>
+  `).join("");
 }
 
 async function genDraft(idx, mode) {
-  const email = CURRENT_EMAILS[idx];
-  const card = $(`email-${idx}`);
-  const btns = card.querySelectorAll(".btn");
-  btns.forEach(b => b.disabled = true);
-  toast(`Génération brouillon (${mode})…`);
+  const email = CURRENT[idx];
+  const card = $(`card-${idx}`);
+  card.querySelectorAll(".pill-btn").forEach(b => b.disabled = true);
+  toast(`Génération… <span class="spin-ico"></span>`);
   try {
     const r = await fetch("/api/draft", {
       method: "POST",
@@ -412,26 +561,28 @@ async function genDraft(idx, mode) {
     const d = await r.json();
     if (d.error) throw new Error(d.error);
 
-    $("modal-title").textContent = "Brouillon généré";
-    $("modal-mode").textContent = labelMode(mode);
-    $("modal-mode").style.background = colorMode(mode).bg;
-    $("modal-mode").style.color = colorMode(mode).fg;
-    $("modal-to").textContent = email.from_raw;
-    $("modal-subject").textContent = "Re: " + email.subject;
-    $("modal-text").value = d.draft_text || "";
-    $("modal-open").href = d.gmail_url || "https://mail.google.com/mail/u/0/#drafts";
-    $("modal").classList.add("show");
-    toast("Brouillon prêt + draft Gmail créé");
+    $("sheet-mode").textContent = labelMode(mode);
+    $("sheet-mode").style.background = colorMode(mode).bg;
+    $("sheet-mode").style.color = colorMode(mode).fg;
+    $("sheet-to").textContent = email.from_raw;
+    $("sheet-subject").textContent = "Re: " + email.subject;
+    $("sheet-text").value = d.draft_text || "";
+    $("sheet-open").href = d.gmail_url || "https://mail.google.com/mail/u/0/#drafts";
+
+    openSheet();
+    toast("Brouillon prêt");
+    if (window.navigator.vibrate) window.navigator.vibrate(8);
   } catch (e) {
-    toast("Erreur : " + e.message, true);
+    toast(esc(e.message), true);
   } finally {
-    btns.forEach(b => b.disabled = false);
+    card.querySelectorAll(".pill-btn").forEach(b => b.disabled = false);
   }
 }
 
 async function snooze(idx) {
-  const email = CURRENT_EMAILS[idx];
-  const card = $(`email-${idx}`);
+  const email = CURRENT[idx];
+  const card = $(`card-${idx}`);
+  if (window.navigator.vibrate) window.navigator.vibrate(6);
   card.classList.add("snoozing");
   try {
     await fetch("/api/snooze", {
@@ -440,18 +591,27 @@ async function snooze(idx) {
       body: JSON.stringify({uid: email.uid}),
     });
     setTimeout(() => {
-      CURRENT_EMAILS = CURRENT_EMAILS.filter((_, i) => i !== idx);
-      render(CURRENT_EMAILS);
-      $("status").textContent = `${CURRENT_EMAILS.length} email(s) à traiter`;
-    }, 400);
+      CURRENT = CURRENT.filter((_, i) => i !== idx);
+      render(CURRENT);
+      updateCount();
+    }, 380);
     toast("Marqué comme traité");
   } catch (e) {
     card.classList.remove("snoozing");
-    toast("Erreur : " + e.message, true);
+    toast(esc(e.message), true);
   }
 }
 
-function closeModal() { $("modal").classList.remove("show"); }
+function openSheet() {
+  $("sheet").classList.add("show");
+  $("sheet-bd").classList.add("show");
+  document.body.style.overflow = "hidden";
+}
+function closeSheet() {
+  $("sheet").classList.remove("show");
+  $("sheet-bd").classList.remove("show");
+  document.body.style.overflow = "";
+}
 
 function esc(s) {
   const div = document.createElement("div");
@@ -462,36 +622,71 @@ function formatDate(d) {
   if (!d) return "";
   try {
     const dt = new Date(d);
-    const now = new Date();
-    const ms = now - dt;
+    const ms = new Date() - dt;
     const min = Math.floor(ms / 60000);
-    if (min < 60) return `il y a ${min}min`;
-    if (min < 60*24) return `il y a ${Math.floor(min/60)}h`;
-    if (min < 60*24*7) return `il y a ${Math.floor(min/(60*24))}j`;
-    return dt.toLocaleDateString("fr-CA");
+    if (min < 1) return "à l'instant";
+    if (min < 60) return `${min}min`;
+    if (min < 60*24) return `${Math.floor(min/60)}h`;
+    if (min < 60*24*7) return `${Math.floor(min/(60*24))}j`;
+    return dt.toLocaleDateString("fr-CA", {month:"short", day:"numeric"});
   } catch { return d; }
 }
-function labelMode(m) { return {court: "Court", info: "Demande info", decline: "Décline"}[m] || m; }
-function colorMode(m) { return {
-  court:   {bg: "#134e2c", fg: "#4ADE80"},
-  info:    {bg: "#5c4310", fg: "#FBBF24"},
-  decline: {bg: "#5c1a1a", fg: "#F87171"},
-}[m] || {bg: "#252525", fg: "#888"}; }
+function labelMode(m) { return {court: "Court", info: "Info", decline: "Décline"}[m] || m; }
+function colorMode(m) {
+  return {
+    court:   {bg: "rgba(52, 199, 89, 0.22)",  fg: "#34C759"},
+    info:    {bg: "rgba(255, 159, 10, 0.22)", fg: "#FF9F0A"},
+    decline: {bg: "rgba(255, 69, 58, 0.22)",  fg: "#FF453A"},
+  }[m] || {bg: "rgba(255,255,255,0.1)", fg: "#fff"};
+}
 
 let toastTimer;
-function toast(msg, isErr=false) {
+function toast(html, isErr=false) {
   const t = $("toast");
-  t.textContent = msg;
+  t.innerHTML = html;
   t.classList.toggle("error", isErr);
   t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("show"), 3500);
+  toastTimer = setTimeout(() => t.classList.remove("show"), isErr ? 4000 : 2500);
 }
 
-// Auto-load on page open
+// Swipe-down sur le sheet pour le fermer (gesture iOS-like)
+let sheetTouchY = null;
+$("sheet").addEventListener("touchstart", e => {
+  if (e.target.closest(".sheet-body, textarea, button, a")) return;
+  sheetTouchY = e.touches[0].clientY;
+}, {passive: true});
+$("sheet").addEventListener("touchmove", e => {
+  if (sheetTouchY === null) return;
+  const dy = e.touches[0].clientY - sheetTouchY;
+  if (dy > 0) $("sheet").style.transform = `translateY(${dy}px)`;
+}, {passive: true});
+$("sheet").addEventListener("touchend", e => {
+  if (sheetTouchY === null) return;
+  const dy = e.changedTouches[0].clientY - sheetTouchY;
+  $("sheet").style.transform = "";
+  if (dy > 100) closeSheet();
+  sheetTouchY = null;
+}, {passive: true});
+
+// Pull-to-refresh très simple
+let prTouch = null;
+window.addEventListener("touchstart", e => {
+  if (window.scrollY === 0) prTouch = e.touches[0].clientY;
+}, {passive: true});
+window.addEventListener("touchend", e => {
+  if (prTouch === null) return;
+  const dy = e.changedTouches[0].clientY - prTouch;
+  if (dy > 80) loadInbox(true);
+  prTouch = null;
+}, {passive: true});
+
+// Init
 loadInbox();
-// Auto-refresh toutes les 5 min
-setInterval(loadInbox, 5 * 60 * 1000);
+setInterval(() => loadInbox(false), 5 * 60 * 1000);
+
+// Esc pour fermer le sheet
+window.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet(); });
 </script>
 </body>
 </html>
