@@ -253,6 +253,38 @@
     -webkit-box-orient: vertical;
     letter-spacing: -0.2px;
   }
+  /* Synthèse Gemini : plus contrasté que snippet, italic pour démarquer */
+  .card-synthese {
+    font-size: 14px;
+    color: var(--text);
+    line-height: 1.5;
+    margin-bottom: 14px;
+    letter-spacing: -0.2px;
+    padding: 10px 12px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 12px;
+    border-left: 2px solid rgba(255,255,255,0.20);
+  }
+  .card-synthese:empty { display: none; }
+
+  /* Type pills : code couleur selon type d'email */
+  .pill.type             { font-weight: 600; }
+  .pill.type-lead_chaud  { background: rgba(255, 69, 58, 0.18);  color: #FF6B5F;  border-color: rgba(255, 69, 58, 0.30); }
+  .pill.type-lead_refere { background: rgba(255, 159, 10, 0.18); color: #FFB13D;  border-color: rgba(255, 159, 10, 0.30); }
+  .pill.type-suivi_client{ background: rgba(10, 132, 255, 0.18); color: #4DA8FF;  border-color: rgba(10, 132, 255, 0.30); }
+  .pill.type-question    { background: rgba(191, 90, 242, 0.18); color: #D38DFF;  border-color: rgba(191, 90, 242, 0.30); }
+  .pill.type-facture_admin { background: rgba(255,255,255,0.08); color: var(--text-2); }
+
+  /* Urgence : dots colorés selon niveau */
+  .urgence {
+    font-size: 9px;
+    letter-spacing: 1.2px;
+    color: var(--green);
+    line-height: 1;
+  }
+  .urgence[title*="3/"] { color: var(--yellow); }
+  .urgence[title*="4/"] { color: #FF9F0A; }
+  .urgence[title*="5/"] { color: var(--red); }
 
   .card-actions {
     display: grid;
@@ -540,26 +572,44 @@ function render(emails) {
     $("inbox").innerHTML = `<div class="state"><div class="ico">🌿</div><div class="text">Tout traité.<br>Bonne journée.</div></div>`;
     return;
   }
-  $("inbox").innerHTML = emails.map((e, i) => `
+  $("inbox").innerHTML = emails.map((e, i) => {
+    const actions = e.actions || [
+      {id: "court",   label: "Court",   color: "green"},
+      {id: "info",    label: "Info",    color: "yellow"},
+      {id: "decline", label: "Décline", color: "red"},
+    ];
+    const typeLabel = labelType(e.analysis_type);
+    const synthese = e.analysis_synthese || e.snippet || "";
+    const urgenceDots = "●".repeat(Math.max(1, Math.min(5, e.analysis_urgence || 2)));
+    return `
     <div class="card" id="card-${i}">
       <div class="card-meta-row">
-        <span class="pill account ${e.account === 'Gmail' ? 'gmail-account' : ''}">${e.account === 'Gmail' ? 'Gmail' : 'Hostinger'}</span>
-        <span class="pill">${esc(e.reason)}</span>
+        ${typeLabel ? `<span class="pill type type-${e.analysis_type}">${esc(typeLabel)}</span>` : ''}
+        <span class="urgence" title="Urgence ${e.analysis_urgence || 2}/5">${urgenceDots}</span>
         <span class="pill time">${formatDate(e.date)}</span>
       </div>
       <div class="card-from">${esc(e.from_raw)}</div>
       <div class="card-subject">${esc(e.subject)}</div>
-      <div class="card-snippet">${esc(e.snippet)}</div>
+      <div class="card-synthese">${esc(synthese)}</div>
       <div class="card-actions">
-        <button class="pill-btn green"  onclick="genDraft(${i}, 'court')"><span class="dot"></span>Court</button>
-        <button class="pill-btn yellow" onclick="genDraft(${i}, 'info')"><span class="dot"></span>Info</button>
-        <button class="pill-btn red"    onclick="genDraft(${i}, 'decline')"><span class="dot"></span>Décline</button>
+        ${actions.map(a => `<button class="pill-btn ${a.color}" onclick="genDraft(${i}, '${esc(a.id)}')"><span class="dot"></span>${esc(a.label)}</button>`).join('')}
         <button class="pill-btn snooze" onclick="snooze(${i})" aria-label="Marquer fait">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
         </button>
       </div>
-    </div>
-  `).join("");
+    </div>`;
+  }).join("");
+}
+
+function labelType(t) {
+  return {
+    "lead_chaud":   "🔥 Lead chaud",
+    "lead_refere":  "👤 Lead référé",
+    "suivi_client": "🤝 Suivi client",
+    "question":     "❓ Question",
+    "facture_admin":"📄 Admin / facture",
+    "autre":        "",
+  }[t] || "";
 }
 
 async function genDraft(idx, mode) {

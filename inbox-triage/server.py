@@ -239,41 +239,20 @@ DRAFT_PROMPTS = {
 }
 
 
-def _gemini_generate(email_data: dict, mode: str) -> str | None:
-    """Appelle Gemini pour générer le corps de la réponse."""
+def _gemini_call(prompt: str, max_tokens: int = 600, temperature: float = 0.7) -> str | None:
+    """Appel Gemini bas-niveau. Retourne le texte ou None.
+    gemini-2.5-flash avec thinkingBudget=0 (sinon le mode thinking consomme
+    silencieusement les tokens d'output et tronque la réponse réelle)."""
     if not GEMINI_KEY:
         return None
-    if mode not in DRAFT_PROMPTS:
-        return None
-
-    prompt = f"""Tu es Jean-Philippe (JP) Roy, fondateur de Welldone Studio à Québec.
-Studio nomade de production visuelle stratégique : photographie architecturale,
-immobilier luxe, branding, design pour PME au Québec. ~10 ans d'existence,
-travaille en solo avec sous-traitants ponctuels. Ton sobre, direct, sans bullshit.
-
-Email reçu :
-De : {email_data['from_raw']}
-Sujet : {email_data['subject']}
-
-Corps de l'email reçu :
-\"\"\"
-{email_data['body']}
-\"\"\"
-
-Mode de réponse demandé : {DRAFT_PROMPTS[mode]}
-
-CONSIGNES STRICTES :
-- Retourne UNIQUEMENT le corps de la réponse (le texte qui ira dans le mail)
-- PAS de salutation initiale ("Bonjour X,")
-- PAS de signature finale ("JP", "Cordialement", etc.)
-- PAS de markdown, pas de code, pas d'explications meta
-- Texte plain, prêt à copier-coller
-"""
-
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_KEY}"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 600},
+        "generationConfig": {
+            "temperature": temperature,
+            "maxOutputTokens": max_tokens,
+            "thinkingConfig": {"thinkingBudget": 0},  # désactive le thinking de 2.5
+        },
     }
     req = urllib.request.Request(
         url,
@@ -291,6 +270,232 @@ CONSIGNES STRICTES :
     except Exception as e:
         print(f"Gemini error: {e}")
     return None
+
+
+# ── Analyse pre-scan : type, synthèse, urgence, profil d'actions ──────────────
+ANALYSIS_FILE = Path.home() / ".welldone" / "dashboard_analysis.json"
+_ANALYSIS_LOCK = Lock()
+
+# Profils d'actions selon le type d'email
+ACTION_PROFILES = {
+    "lead_chaud": [
+        {"id": "appeler",   "label": "Appeler",         "color": "green"},
+        {"id": "info",      "label": "Demander brief",  "color": "yellow"},
+        {"id": "decline",   "label": "Décliner",        "color": "red"},
+    ],
+    "lead_refere": [
+        {"id": "appeler",   "label": "Appeler",         "color": "green"},
+        {"id": "court",     "label": "Court",           "color": "yellow"},
+        {"id": "decline",   "label": "Décliner",        "color": "red"},
+    ],
+    "suivi_client": [
+        {"id": "court",     "label": "Court",           "color": "green"},
+        {"id": "info",      "label": "Demander info",   "color": "yellow"},
+        {"id": "reporter",  "label": "Reporter",        "color": "red"},
+    ],
+    "question": [
+        {"id": "repondre",  "label": "Répondre",        "color": "green"},
+        {"id": "info",      "label": "Demander précis", "color": "yellow"},
+        {"id": "reporter",  "label": "Reporter",        "color": "red"},
+    ],
+    "facture_admin": [
+        {"id": "ack",       "label": "Confirmer reçu",  "color": "green"},
+        {"id": "info",      "label": "Question",        "color": "yellow"},
+        {"id": "decline",   "label": "Décliner",        "color": "red"},
+    ],
+    "_default": [
+        {"id": "court",     "label": "Court",           "color": "green"},
+        {"id": "info",      "label": "Info",            "color": "yellow"},
+        {"id": "decline",   "label": "Décline",         "color": "red"},
+    ],
+}
+
+
+def _load_analysis_cache() -> dict:
+    try:
+        if ANALYSIS_FILE.exists():
+            data = json.loads(ANALYSIS_FILE.read_text())
+            cutoff = (datetime.now() - timedelta(days=30)).isoformat()
+            return {k: v for k, v in data.items() if v.get("ts", "") >= cutoff}
+    except Exception:
+        pass
+    return {}
+
+def _save_analysis_cache(cache: dict) -> None:
+    try:
+        ANALYSIS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ANALYSIS_FILE.write_text(json.dumps(cache, indent=2, ensure_ascii=False))
+    except Exception as e:
+        print(f"save analysis cache: {e}")
+
+_ANALYSIS_CACHE = _load_analysis_cache()
+
+
+def _analyze_email(email_data: dict) -> dict:
+    """
+    Analyse un email avec Gemini pour produire :
+      - type (lead_chaud, suivi_client, question, facture_admin, etc.)
+      - synthese (1 phrase qui répond : qui demande quoi, l'enjeu)
+      - urgence (1-5)
+      - actions (profil de boutons adapté)
+    Cache disque par rfc822_id (analysis cost ~30 tokens, ne re-fait pas un email vu).
+    """
+    cache_key = email_data.get("rfc822_id") or f"{email_data.get('subject','')[:50]}|{email_data.get('sender','')}"
+    with _ANALYSIS_LOCK:
+        cached = _ANALYSIS_CACHE.get(cache_key)
+        if cached and cached.get("synthese"):
+            return cached
+
+    prompt = f"""Tu analyses un email reçu par Jean-Philippe (JP) Roy, fondateur de Welldone Studio à Québec
+(photographie architecturale, immobilier luxe, branding, design pour PME). Ton sobre, direct.
+
+Email reçu :
+De : {email_data.get('from_raw','')}
+Sujet : {email_data.get('subject','')}
+
+Corps :
+\"\"\"
+{(email_data.get('body','') or email_data.get('snippet',''))[:2000]}
+\"\"\"
+
+Retourne EXACTEMENT ce JSON (rien d'autre, pas de markdown, pas de ```) :
+{{
+  "type": "lead_chaud" | "lead_refere" | "suivi_client" | "question" | "facture_admin" | "autre",
+  "synthese": "Une seule phrase ultra concise répondant : QUI demande QUOI et POURQUOI (l'enjeu pour JP). Max 25 mots.",
+  "urgence": 1
+}}
+
+Définitions des types :
+- lead_chaud : nouveau prospect avec demande explicite de service Welldone (formulaire site, brief auto, demande de soumission)
+- lead_refere : prospect référé par un contact, premier message
+- suivi_client : client existant qui revient sur un mandat / projet / livraison
+- question : demande de clarification ou info sans engagement immédiat
+- facture_admin : confirmation de paiement, facture, contrat à signer, admin
+- autre : reste
+
+Urgence (1=peut attendre / 5=critique aujourd'hui). Échelle :
+- 5 : décision aujourd'hui, gros budget en jeu, ou client mécontent
+- 4 : à traiter dans la journée, lead chaud avec timing
+- 3 : à traiter cette semaine
+- 2 : info utile mais pas pressante
+- 1 : peut attendre la prochaine pause inbox
+"""
+
+    raw = _gemini_call(prompt, max_tokens=500, temperature=0.2)
+    analysis = {"type": "autre", "synthese": "", "urgence": 2, "ts": datetime.now().isoformat()}
+    if raw:
+        # Strip markdown fences ```json ... ``` que Gemini ajoute parfois
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+            cleaned = re.sub(r"\s*```\s*$", "", cleaned)
+        # Tenter parse direct, sinon extraire le 1er bloc {...} balancé
+        parsed = None
+        try:
+            parsed = json.loads(cleaned)
+        except Exception:
+            start = cleaned.find("{")
+            if start >= 0:
+                depth = 0
+                for i, c in enumerate(cleaned[start:], start):
+                    if c == "{": depth += 1
+                    elif c == "}":
+                        depth -= 1
+                        if depth == 0:
+                            try:
+                                parsed = json.loads(cleaned[start:i+1])
+                            except Exception:
+                                pass
+                            break
+        if parsed:
+            try:
+                analysis["type"] = str(parsed.get("type", "autre")).strip()
+                analysis["synthese"] = str(parsed.get("synthese", "")).strip()
+                analysis["urgence"] = int(parsed.get("urgence", 2))
+            except Exception as e:
+                print(f"analyze field: {e}")
+        else:
+            print(f"analyze: pas de JSON parseable — raw: {raw[:200]}")
+
+    if analysis["type"] not in ACTION_PROFILES:
+        analysis["type"] = "autre"
+    analysis["actions"] = ACTION_PROFILES.get(analysis["type"], ACTION_PROFILES["_default"])
+
+    with _ANALYSIS_LOCK:
+        _ANALYSIS_CACHE[cache_key] = analysis
+        _save_analysis_cache(_ANALYSIS_CACHE)
+    return analysis
+
+
+# Prompts pour drafts adaptés à l'action choisie
+DRAFT_INSTRUCTIONS = {
+    "appeler": (
+        "Annonce que tu vas appeler dans la prochaine heure. Demande la meilleure plage horaire si pertinent. "
+        "1-2 phrases max, ton chaleureux mais direct, français québécois. "
+        "Si un numéro de téléphone est dans l'email, mentionne que tu vas l'utiliser."
+    ),
+    "court": (
+        "Réponds en 2-3 phrases, ton chaleureux mais professionnel, en français québécois. "
+        "Sois direct, concret. Aucun jargon, aucune formule pompeuse."
+    ),
+    "info": (
+        "Demande UNE clarification précise nécessaire pour avancer (pas plusieurs questions). "
+        "Court, ton chaleureux, en 2-3 phrases. Français québécois."
+    ),
+    "decline": (
+        "Décline poliment mais clairement. Expose 1 raison brève (timing, scope, ou fit). "
+        "Ouvre la porte pour le futur si pertinent. 2-3 phrases. Français québécois."
+    ),
+    "reporter": (
+        "Indique que tu reviens là-dessus dans 24-48h, mentionne pourquoi tu ne réponds pas tout de suite. "
+        "1-2 phrases, ton sincère, français québécois."
+    ),
+    "repondre": (
+        "Réponds directement à la question posée. Concis, factuel, ton sobre. "
+        "Pas plus de 4 phrases. Français québécois."
+    ),
+    "ack": (
+        "Confirme la bonne réception. Si action requise (paiement, signature), indique tu vas la faire et quand. "
+        "1-2 phrases, ton concis, français québécois."
+    ),
+}
+
+
+def _gemini_generate(email_data: dict, mode: str) -> str | None:
+    """Appelle Gemini pour générer le corps de la réponse, selon l'action choisie (mode)."""
+    if not GEMINI_KEY:
+        return None
+    instruction = DRAFT_INSTRUCTIONS.get(mode)
+    if not instruction:
+        # Fallback sur "court" si mode inconnu
+        instruction = DRAFT_INSTRUCTIONS["court"]
+
+    prompt = f"""Tu es Jean-Philippe (JP) Roy, fondateur de Welldone Studio à Québec.
+Studio nomade de production visuelle stratégique : photographie architecturale,
+immobilier luxe, branding, design pour PME. Ton sobre, direct, sans bullshit.
+
+Email reçu :
+De : {email_data.get('from_raw','')}
+Sujet : {email_data.get('subject','')}
+
+Corps de l'email reçu :
+\"\"\"
+{email_data.get('body','') or email_data.get('snippet','')}
+\"\"\"
+
+Type d'email (analyse pré-faite) : {email_data.get('analysis_type', 'autre')}
+Synthèse : {email_data.get('analysis_synthese', '')}
+
+Action demandée : {instruction}
+
+CONSIGNES STRICTES :
+- Retourne UNIQUEMENT le corps de la réponse (le texte qui ira dans le mail)
+- PAS de salutation initiale ("Bonjour X,")
+- PAS de signature finale ("JP", "Cordialement", etc.)
+- PAS de markdown, pas de code, pas d'explications meta
+- Texte plain, prêt à copier-coller
+"""
+    return _gemini_call(prompt, max_tokens=500, temperature=0.7)
 
 
 def _create_gmail_draft(to_email: str, subject: str, body: str,
@@ -364,6 +569,25 @@ def _get_inbox_cached(force: bool = False) -> list[dict]:
                 return datetime.min
 
         emails.sort(key=date_key, reverse=True)
+
+        # Analyse Gemini par email (cached par rfc822_id, ne re-fait pas un email vu)
+        for e in emails:
+            try:
+                a = _analyze_email(e)
+                e["analysis_type"] = a.get("type", "autre")
+                e["analysis_synthese"] = a.get("synthese", "")
+                e["analysis_urgence"] = a.get("urgence", 2)
+                e["actions"] = a.get("actions", ACTION_PROFILES["_default"])
+            except Exception as ex:
+                print(f"analyze {e.get('subject', '')[:40]}: {ex}")
+                e["analysis_type"] = "autre"
+                e["analysis_synthese"] = ""
+                e["analysis_urgence"] = 2
+                e["actions"] = ACTION_PROFILES["_default"]
+
+        # Trier par urgence décroissante puis date décroissante
+        emails.sort(key=lambda e: (-(e.get("analysis_urgence", 2)), -date_key(e).timestamp() if date_key(e) != datetime.min else 0))
+
         _CACHE["emails"] = emails
         _CACHE["ts"] = now
 
