@@ -456,6 +456,69 @@
     letter-spacing: -0.1px;
   }
 
+  /* Bouton primaire (CTA principale Répondre / Créer draft) */
+  .pill-btn.primary {
+    background: var(--blue);
+    color: white;
+    border: 0.5px solid rgba(255,255,255,0.20);
+  }
+  .pill-btn.primary:active { background: #0066D6; }
+
+  /* Email original collapsible dans le sheet */
+  .context-block {
+    background: rgba(255,255,255,0.04);
+    border: 0.5px solid rgba(255,255,255,0.10);
+    border-radius: 14px;
+    padding: 10px 14px;
+    margin-bottom: 14px;
+    font-size: 13px;
+  }
+  .context-block summary {
+    cursor: pointer;
+    color: var(--text-2);
+    font-weight: 600;
+    list-style: none;
+    user-select: none;
+    padding: 4px 0;
+  }
+  .context-block summary::-webkit-details-marker { display: none; }
+  .context-block[open] summary { color: var(--text); margin-bottom: 8px; }
+  .sheet-context-synthese {
+    color: var(--text);
+    font-style: italic;
+    margin-bottom: 8px;
+    padding: 8px 10px;
+    background: rgba(10,132,255,0.08);
+    border-left: 2px solid var(--blue);
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  .sheet-context-synthese:empty { display: none; }
+  .sheet-context-body {
+    color: var(--text-2);
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    max-height: 240px;
+    overflow-y: auto;
+    word-break: break-word;
+  }
+  .sheet-textarea-label {
+    font-size: 12px;
+    color: var(--text-2);
+    margin-bottom: 6px;
+    font-weight: 600;
+    letter-spacing: -0.1px;
+  }
+  .sheet-textarea-label .hint-inline {
+    color: var(--text-3);
+    font-weight: 400;
+    margin-left: 4px;
+  }
+  .sheet-actions-post .open-gmail {
+    flex: 1;
+  }
+
   /* ── Toast ───────────────────────────────────────────────────────────────── */
   .toast {
     position: fixed;
@@ -517,8 +580,7 @@
   <div class="sheet-grabber"></div>
   <div class="sheet-header">
     <div class="sheet-header-row">
-      <div class="sheet-title">Brouillon</div>
-      <span class="sheet-mode" id="sheet-mode"><span class="dot" id="sheet-mode-dot"></span><span id="sheet-mode-label"></span></span>
+      <div class="sheet-title">Répondre</div>
     </div>
     <div class="sheet-meta">
       <strong id="sheet-to"></strong><br>
@@ -526,14 +588,30 @@
     </div>
   </div>
   <div class="sheet-body">
-    <textarea id="sheet-text" placeholder="Brouillon généré…"></textarea>
+    <details class="context-block" open>
+      <summary>📩 Email original</summary>
+      <div class="sheet-context-synthese" id="sheet-context-synthese"></div>
+      <div class="sheet-context-body" id="sheet-context-body"></div>
+    </details>
+    <div class="sheet-textarea-label">✏️ Ta réponse <span class="hint-inline">— dicte (WhisperFlow ⌘⇧;) ou tape</span></div>
+    <textarea id="sheet-text" placeholder="Dicte ta réponse ici, ou tape au clavier. Gemini la polira ensuite."></textarea>
   </div>
   <div class="sheet-footer">
-    <a class="open-gmail" id="sheet-open" target="_blank">
-      Ouvrir dans Gmail
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-    </a>
-    <div class="hint">Le brouillon est aussi sauvegardé dans Gmail Drafts.</div>
+    <div class="sheet-actions-pre" id="sheet-actions-pre" style="display:flex; gap:8px;">
+      <button class="pill-btn yellow" id="polish-btn" onclick="polish()" style="flex:1; min-height:48px;">
+        <span class="dot"></span>✨ Polish Gemini
+      </button>
+      <button class="pill-btn primary" id="create-btn" onclick="createDraft()" style="flex:1; min-height:48px;">
+        📤 Créer draft Gmail
+      </button>
+    </div>
+    <div class="sheet-actions-post" id="sheet-actions-post" style="display:none;">
+      <a class="open-gmail" id="sheet-open" target="_blank" style="display:flex;">
+        Ouvrir dans Gmail
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+      </a>
+    </div>
+    <div class="hint">Le draft est sauvegardé dans Gmail Drafts. Tu peux relire avant d'envoyer.</div>
   </div>
 </div>
 
@@ -573,11 +651,6 @@ function render(emails) {
     return;
   }
   $("inbox").innerHTML = emails.map((e, i) => {
-    const actions = e.actions || [
-      {id: "court",   label: "Court",   color: "green"},
-      {id: "info",    label: "Info",    color: "yellow"},
-      {id: "decline", label: "Décline", color: "red"},
-    ];
     const typeLabel = labelType(e.analysis_type);
     const synthese = e.analysis_synthese || e.snippet || "";
     const urgenceDots = "●".repeat(Math.max(1, Math.min(5, e.analysis_urgence || 2)));
@@ -592,7 +665,10 @@ function render(emails) {
       <div class="card-subject">${esc(e.subject)}</div>
       <div class="card-synthese">${esc(synthese)}</div>
       <div class="card-actions">
-        ${actions.map(a => `<button class="pill-btn ${a.color}" onclick="genDraft(${i}, '${esc(a.id)}')"><span class="dot"></span>${esc(a.label)}</button>`).join('')}
+        <button class="pill-btn primary" onclick="openCompose(${i})">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px"><path d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+          Répondre
+        </button>
         <button class="pill-btn snooze" onclick="snooze(${i})" aria-label="Marquer fait">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
         </button>
@@ -612,34 +688,84 @@ function labelType(t) {
   }[t] || "";
 }
 
-async function genDraft(idx, mode) {
+let CURRENT_EMAIL_IDX = null;
+
+function openCompose(idx) {
   const email = CURRENT[idx];
-  const card = $(`card-${idx}`);
-  card.querySelectorAll(".pill-btn").forEach(b => b.disabled = true);
-  toast(`Génération <span class="spin-ico"></span>`);
+  CURRENT_EMAIL_IDX = idx;
+  $("sheet-to").textContent = email.from_raw;
+  $("sheet-subject").textContent = "Re: " + email.subject;
+  $("sheet-context-body").textContent = (email.body || email.snippet || "").trim();
+  $("sheet-context-synthese").textContent = email.analysis_synthese || "";
+  $("sheet-text").value = "";
+  $("sheet-text").placeholder = "Dicte ta réponse ici (WhisperFlow ⌘⇧;) ou tape au clavier. Gemini la polira ensuite.";
+  $("sheet-open").style.display = "none";
+  $("sheet-actions-pre").style.display = "flex";
+  $("sheet-actions-post").style.display = "none";
+  openSheet();
+  // Focus textarea pour que WhisperFlow puisse écrire dedans direct
+  setTimeout(() => $("sheet-text").focus(), 350);
+}
+
+async function polish() {
+  const email = CURRENT[CURRENT_EMAIL_IDX];
+  const raw = $("sheet-text").value.trim();
+  if (!raw) {
+    toast("Tape ou dicte ta réponse d'abord");
+    return;
+  }
+  $("polish-btn").disabled = true;
+  toast(`Polish Gemini <span class="spin-ico"></span>`);
   try {
-    const r = await fetch("/api/draft", {
+    const r = await fetch("/api/polish", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({...email, mode}),
+      body: JSON.stringify({...email, raw_response: raw}),
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error);
+    $("sheet-text").value = d.polished || raw;
+    toast("Polish appliqué");
+    if (window.navigator.vibrate) window.navigator.vibrate(6);
+  } catch (e) {
+    toast(esc(e.message), true);
+  } finally {
+    $("polish-btn").disabled = false;
+  }
+}
 
-    $("sheet-mode-label").textContent = labelMode(mode);
-    $("sheet-mode-dot").style.background = colorMode(mode);
-    $("sheet-to").textContent = email.from_raw;
-    $("sheet-subject").textContent = "Re: " + email.subject;
-    $("sheet-text").value = d.draft_text || "";
+async function createDraft() {
+  const email = CURRENT[CURRENT_EMAIL_IDX];
+  const text = $("sheet-text").value.trim();
+  if (!text) {
+    toast("Le brouillon est vide");
+    return;
+  }
+  $("create-btn").disabled = true;
+  toast(`Création draft Gmail <span class="spin-ico"></span>`);
+  try {
+    // On envoie le texte comme raw_response = "" et on hijack /api/draft pour
+    // qu'il crée le draft directement avec ce body. Plus simple : nouveau path mental :
+    // /api/draft accepte {body_override: text} sinon génère via mode.
+    // Mais simpler : faire 2e endpoint OU envoyer le polished=text via raw_response qui
+    // re-polish (overhead). Plan : passer body comme raw_response avec un flag skip.
+    const r = await fetch("/api/draft", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({...email, raw_response: text, skip_polish: true}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
     $("sheet-open").href = d.gmail_url || "https://mail.google.com/mail/u/0/#drafts";
-
-    openSheet();
-    toast("Brouillon prêt");
+    $("sheet-open").style.display = "flex";
+    $("sheet-actions-pre").style.display = "none";
+    $("sheet-actions-post").style.display = "flex";
+    toast("Brouillon Gmail créé");
     if (window.navigator.vibrate) window.navigator.vibrate(8);
   } catch (e) {
     toast(esc(e.message), true);
   } finally {
-    card.querySelectorAll(".pill-btn").forEach(b => b.disabled = false);
+    $("create-btn").disabled = false;
   }
 }
 

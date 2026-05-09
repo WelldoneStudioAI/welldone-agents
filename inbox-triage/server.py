@@ -461,8 +461,49 @@ DRAFT_INSTRUCTIONS = {
 }
 
 
+def _gemini_polish(email_data: dict, raw_response: str) -> str | None:
+    """Prend la dictée brute (WhisperFlow ou clavier) + le contexte email,
+    et retourne le texte poli en email pro JP/Welldone."""
+    if not GEMINI_KEY or not raw_response.strip():
+        return None
+
+    prompt = f"""Tu es Jean-Philippe (JP) Roy, fondateur de Welldone Studio à Québec.
+Studio nomade de production visuelle stratégique : photographie architecturale,
+immobilier luxe, branding, design pour PME au Québec. Ton sobre, direct, chaleureux,
+sans bullshit, français québécois (pas hexagonal).
+
+Email reçu auquel tu réponds :
+De : {email_data.get('from_raw','')}
+Sujet : {email_data.get('subject','')}
+
+Corps de l'email reçu :
+\"\"\"
+{(email_data.get('body','') or email_data.get('snippet',''))[:3000]}
+\"\"\"
+
+Voici la dictée brute de JP (peut contenir des hésitations, fautes, ou syntaxe orale) :
+\"\"\"
+{raw_response.strip()}
+\"\"\"
+
+Ta tâche : reformule cette dictée en un email pro, dans le ton de JP (sobre, direct, québécois).
+- Garde TOUS les points de fond exprimés par JP (rien d'inventé, rien d'omis)
+- Corrige fautes/syntaxe orale → écrit
+- Pas pompeux, pas de "Je vous remercie de votre courriel" ni de formules creuses
+- 2-5 phrases en général, suit la longueur de la dictée
+
+CONSIGNES STRICTES :
+- Retourne UNIQUEMENT le corps de la réponse (texte qui ira dans le mail)
+- PAS de salutation initiale ("Bonjour X,")
+- PAS de signature finale ("JP", "Cordialement", etc.)
+- PAS de markdown, pas d'explications meta
+"""
+    return _gemini_call(prompt, max_tokens=600, temperature=0.5)
+
+
 def _gemini_generate(email_data: dict, mode: str) -> str | None:
-    """Appelle Gemini pour générer le corps de la réponse, selon l'action choisie (mode)."""
+    """Génère un draft from-scratch (legacy, pour compatibilité). Utilise _gemini_polish
+    si raw_response disponible, sinon génère selon mode prédéfini."""
     if not GEMINI_KEY:
         return None
     instruction = DRAFT_INSTRUCTIONS.get(mode)
@@ -642,7 +683,24 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "invalid JSON"})
             return
 
-        if self.path == "/api/draft":
+        if self.path == "/api/polish":
+            # Prend la dictée brute (raw_response) + contexte email,
+            # retourne le texte poli en email pro JP. Pas de création Gmail.
+            try:
+                if not data.get("body"):
+                    data["body"] = data.get("snippet", "")
+                raw = data.get("raw_response", "").strip()
+                if not raw:
+                    self._json(400, {"error": "raw_response vide"})
+                    return
+                polished = _gemini_polish(data, raw)
+                if not polished:
+                    self._json(500, {"error": "Gemini n'a rien retourné"})
+                    return
+                self._json(200, {"polished": polished})
+            except Exception as e:
+                self._json(500, {"error": str(e), "trace": traceback.format_exc()})
+        elif self.path == "/api/draft":
             try:
                 # Re-fetch full body (le list endpoint l'a stripé)
                 # Pour simplifier : data doit contenir le body complet (envoyé depuis le client)
@@ -650,7 +708,19 @@ class Handler(BaseHTTPRequestHandler):
                 if not data.get("body"):
                     data["body"] = data.get("snippet", "")
 
-                draft_text = _gemini_generate(data, data.get("mode", "court"))
+                # NOUVEAU : si raw_response fourni (dictée), on polish au lieu de générer.
+                raw_response = data.get("raw_response", "").strip()
+                # 3 chemins :
+                # 1. skip_polish=true → utiliser raw_response tel quel (pré-poli côté UI)
+                # 2. raw_response (dictée brute) → polish via Gemini
+                # 3. mode classique (legacy) → génération from-scratch via Gemini
+                skip_polish = bool(data.get("skip_polish", False))
+                if skip_polish and raw_response:
+                    draft_text = raw_response
+                elif raw_response:
+                    draft_text = _gemini_polish(data, raw_response)
+                else:
+                    draft_text = _gemini_generate(data, data.get("mode", "court"))
                 if not draft_text:
                     self._json(500, {"error": "Gemini n'a rien retourné"})
                     return
