@@ -189,7 +189,17 @@ BULK_SENDERS = ["newsletter@", "no-reply@", "noreply@", "updates@", "marketing@"
                 "notifications@", "donotreply@", "info@mailchimp", "bounce@",
                 "notification.compte@bell", "alertes", "alerte@", "notification@",
                 "nepasrepondre", "ne-pas-repondre", "courriel@desjardins",
-                "notification@desjardins", "info@desjardins"]
+                "notification@desjardins", "info@desjardins",
+                # Transactionnels / automated qui personnalisent avec prénom
+                "passwordreset", "password.reset", "password-reset",
+                "passwordrequest", "password_request",
+                "_announcement", "_announcements", "announcement@", "announcements@",
+                "confirmation@", "confirm@", "auto-confirm",
+                "receipts@", "receipt@", "billing@",
+                "membership@", "support@email.", "support@e-news.",
+                "do-not-reply", "no.reply", "noreply.", "donotreply.",
+                "mailer@", "mailers@",
+                "clients@hellodarwin", "@e-news.", "@email."]
 BULK_SUBJECT_WORDS = [
     "sale", "offer", "save now", "deals", "newsletter", "digest",
     "weekly update", "industry report", "product news", "unsubscribe",
@@ -349,17 +359,19 @@ def _get_body_text(msg) -> str:
 def _is_hot_email(msg, sender: str, lead_domains: tuple[str, ...]) -> tuple[bool, str]:
     """
     Détermine si un email mérite une notification Telegram.
-    Retourne (is_hot, reason). Évalue 4 critères en cascade :
-      ① sender ∈ whitelist (105 contacts)
+    Retourne (is_hot, reason). Ordre des critères :
+      ① sender ∈ whitelist (toujours HOT, peu importe le reste)
       ② To/Cc contient ia@* (automatisation interne)
       ③ sender domain ∈ lead_domains (RDV ou formulaire site)
-      ④ subject ou body contient "Jean-Philippe" | "JP" | "Jp"
+      ④ Prénom dans subject ou body — UNIQUEMENT si pas bulk/marketing
+         (sinon les newsletters qui personnalisent "Bonjour Jean-Philippe…"
+          passent toutes en HOT à tort).
     """
-    # ① Whitelist
+    # ① Whitelist (passe au-dessus de tout, même bulk)
     if sender in _KNOWN_CONTACTS:
         return True, "contact connu"
 
-    # ② Adresse de destination = ia@* (Cloudflare préserve le To: original)
+    # ② Adresse de destination = ia@*
     to_field = (msg.get("To", "") + " " + msg.get("Cc", "") + " " + msg.get("Delivered-To", "")).lower()
     if "ia@" in to_field:
         return True, "automatisation IA"
@@ -368,7 +380,13 @@ def _is_hot_email(msg, sender: str, lead_domains: tuple[str, ...]) -> tuple[bool
     if any(d in sender for d in lead_domains):
         return True, "lead automatique (RDV ou formulaire)"
 
-    # ④ Prénom dans subject ou body (référé qui parle par prénom)
+    # ④ Prénom dans subject ou body — MAIS bloquer le bulk d'abord
+    # Les marketers personnalisent les emails avec le prénom :
+    # "Bonjour Jean-Philippe, voici la promo de la semaine" → faux HOT.
+    # On filtre les bulk (List-Unsubscribe, noreply@, donotreply@, etc.) avant.
+    if _is_bulk_by_headers(str(msg)) or _is_bulk_by_sender(sender):
+        return False, ""
+
     subject = _decode(msg.get("Subject", ""))
     if _NAME_PATTERN.search(subject):
         return True, "prénom dans sujet"
