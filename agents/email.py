@@ -44,6 +44,12 @@ WHC_PASS  = os.environ.get("WHC_PASSWORD", "")
 
 # ── Hostinger (boîte principale jptanguay@awelldone.com) ─────────────────────
 HST_IMAP_HOST = os.environ.get("HST_IMAP_HOST", "imap.hostinger.com")
+# Garde-fou : Railway peut hériter de l'ancienne valeur WHC (mail.awelldone.com = NXDOMAIN
+# depuis la migration MX vers Hostinger). On force la bonne valeur pour éviter le DNS error
+# qui spamme Telegram à chaque tick auto_trier.
+if not HST_IMAP_HOST or HST_IMAP_HOST in ("mail.awelldone.com", "mail.awelldone.studio"):
+    log.warning(f"email: HST_IMAP_HOST invalide ({HST_IMAP_HOST!r}) → fallback imap.hostinger.com")
+    HST_IMAP_HOST = "imap.hostinger.com"
 HST_IMAP_PORT = int(os.environ.get("HST_IMAP_PORT", "993"))
 HST_EMAIL     = os.environ.get("HST_EMAIL", "jptanguay@awelldone.com")
 HST_PASS      = os.environ.get("HST_PASSWORD", "")

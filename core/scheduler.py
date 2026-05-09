@@ -4,13 +4,19 @@ core/scheduler.py — APScheduler (remplace GitHub Actions crons).
 Les crons sont déclarés directement dans chaque agent via l'attribut `schedules`.
 Ce module lit le dispatcher et enregistre tous les jobs automatiquement.
 """
-import asyncio, logging
+import asyncio, logging, time
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from config import TIMEZONE
 
 log = logging.getLogger(__name__)
 _scheduler: AsyncIOScheduler | None = None
+
+# Dédoublonnage des notifications d'erreur Telegram :
+# clé = (agent, command, type_exception) → timestamp dernière alerte envoyée
+# Empêche le spam d'erreurs répétitives (ex: DNS error toutes les 5 min).
+_LAST_ERROR_NOTIFIED: dict[tuple, float] = {}
+_ERROR_NOTIF_COOLDOWN_SEC = 6 * 3600  # 1 alerte identique max / 6h
 
 
 async def _run_scheduled_job(agent_name: str, command: str, telegram_bot=None, chat_id: int | None = None):
@@ -26,8 +32,17 @@ async def _run_scheduled_job(agent_name: str, command: str, telegram_bot=None, c
     except Exception as e:
         msg = f"❌ Erreur tâche auto {agent_name}.{command}: {e}"
         log.error(msg)
-        if telegram_bot and chat_id:
-            await telegram_bot.send_message(chat_id=chat_id, text=msg)
+        # Dédoublonnage : 1 alerte identique max par 6h pour éviter le spam Telegram
+        # quand une erreur récurrente persiste (ex: IMAP DNS error toutes les 5 min).
+        error_key = (agent_name, command, type(e).__name__)
+        now_ts = time.time()
+        last_ts = _LAST_ERROR_NOTIFIED.get(error_key, 0.0)
+        if now_ts - last_ts >= _ERROR_NOTIF_COOLDOWN_SEC:
+            if telegram_bot and chat_id:
+                await telegram_bot.send_message(chat_id=chat_id, text=msg)
+            _LAST_ERROR_NOTIFIED[error_key] = now_ts
+        else:
+            log.info(f"scheduler: erreur identique déjà notifiée il y a {int((now_ts - last_ts)/60)} min, skip Telegram")
 
 
 def create_scheduler(telegram_bot=None, chat_id: int | None = None) -> AsyncIOScheduler:
