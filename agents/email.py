@@ -23,7 +23,8 @@ Config Railway :
   WHC_IMAP_HOST, WHC_SMTP_HOST, WHC_EMAIL, WHC_PASSWORD
 """
 
-import asyncio, email, imaplib, json, logging, os, re, smtplib, ssl, textwrap
+import asyncio, base64, email, imaplib, json, logging, os, re, smtplib, ssl, textwrap
+import urllib.request, urllib.parse, urllib.error
 from email.header import decode_header as _decode_header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -599,6 +600,135 @@ def _is_direct_french(msg) -> bool:
     body_words = set(re.findall(r'\b[a-zàâéèêëîïôùûüç]{3,}\b', body))
     fr_match = len(body_words & _FR_WORDS)
     return fr_match >= 3
+
+
+# ── Gmail API (boîte awelldonestudio@gmail.com) ───────────────────────────────
+# OAuth via GOOGLE_OAUTH_JSON env var (refresh_token déjà autorisé).
+# Couvre les emails reçus côté Gmail, en plus de Hostinger via IMAP.
+
+_GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
+
+
+def _gmail_oauth_token() -> str | None:
+    """Refresh access token via OAuth refresh_token. Retourne None si pas configuré ou échec."""
+    raw = os.environ.get("GOOGLE_OAUTH_JSON", "")
+    if not raw:
+        return None
+    try:
+        oauth = json.loads(raw)
+        data = urllib.parse.urlencode({
+            "client_id": oauth["client_id"],
+            "client_secret": oauth["client_secret"],
+            "refresh_token": oauth["refresh_token"],
+            "grant_type": "refresh_token",
+        }).encode()
+        req = urllib.request.Request(
+            oauth.get("token_uri", "https://oauth2.googleapis.com/token"),
+            data=data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.load(resp)["access_token"]
+    except Exception as e:
+        log.warning(f"email: Gmail OAuth refresh échec: {e}")
+        return None
+
+
+def _gmail_api(method: str, path: str, token: str, body: dict | None = None) -> dict:
+    """Appel REST Gmail API. Retourne dict (_error et _body si HTTP error)."""
+    url = f"{_GMAIL_API_BASE}/{path}"
+    headers = {"Authorization": f"Bearer {token}"}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.load(resp) if resp.length != 0 else {}
+    except urllib.error.HTTPError as e:
+        return {"_error": e.code, "_body": e.read().decode()[:500]}
+    except Exception as e:
+        return {"_error": -1, "_body": str(e)[:500]}
+
+
+def _scan_gmail_api(processed_ids: dict, today_str: str, lead_domains: tuple[str, ...]) -> tuple[list, int]:
+    """
+    Scan Gmail INBOX via API (7 derniers jours, non-déjà-traités).
+    Applique la même logique HOT que l'IMAP Hostinger.
+    Archive les non-HOT (= retire le label INBOX, équivalent "Archive" Gmail).
+    Retourne (hot_list, archived_count). hot = (msg_id, from_raw, subject, "Gmail", reason).
+    """
+    token = _gmail_oauth_token()
+    if not token:
+        log.info("email.gmail: skip (OAuth indisponible)")
+        return [], 0
+
+    list_resp = _gmail_api(
+        "GET",
+        "messages?q=" + urllib.parse.quote("in:inbox newer_than:7d") + "&maxResults=200",
+        token,
+    )
+    if list_resp.get("_error"):
+        log.warning(f"email.gmail: list échec: {list_resp.get('_body', '')[:200]}")
+        return [], 0
+
+    messages = list_resp.get("messages", []) or []
+    log.info(f"email.gmail: {len(messages)} messages INBOX 7j à examiner")
+
+    gmail_processed = processed_ids.get("Gmail", {})
+    hot: list[tuple] = []
+    archive_ids: list[str] = []
+
+    for m in messages:
+        msg_id = m["id"]
+        if msg_id in gmail_processed:
+            continue
+
+        raw_resp = _gmail_api("GET", f"messages/{msg_id}?format=raw", token)
+        if raw_resp.get("_error"):
+            log.warning(f"email.gmail: fetch {msg_id} échec ({raw_resp.get('_error')})")
+            continue
+
+        try:
+            raw_bytes = base64.urlsafe_b64decode(raw_resp["raw"])
+            msg = email.message_from_bytes(raw_bytes)
+        except Exception as e:
+            log.warning(f"email.gmail: decode {msg_id} échec: {e}")
+            continue
+
+        from_raw = _decode(msg.get("From", ""))
+        subject = _decode(msg.get("Subject", "(sans sujet)"))
+        m_match = re.search(r"<([^>]+)>", from_raw)
+        sender = m_match.group(1).lower() if m_match else from_raw.strip().lower()
+
+        gmail_processed[msg_id] = today_str
+
+        is_hot, reason = _is_hot_email(msg, sender, lead_domains)
+        if is_hot:
+            hot.append((msg_id, from_raw, subject, "Gmail", reason))
+        else:
+            archive_ids.append(msg_id)
+
+    # Batch archive (retirer label INBOX = "Archive" Gmail)
+    archived_count = 0
+    if archive_ids:
+        for i in range(0, len(archive_ids), 1000):
+            batch = archive_ids[i:i + 1000]
+            result = _gmail_api(
+                "POST",
+                "messages/batchModify",
+                token,
+                body={"ids": batch, "removeLabelIds": ["INBOX"]},
+            )
+            if result.get("_error"):
+                log.warning(f"email.gmail: batchModify échec: {result.get('_body', '')[:200]}")
+            else:
+                archived_count += len(batch)
+
+    processed_ids["Gmail"] = gmail_processed
+    log.info(f"email.gmail: {len(hot)} HOT, {archived_count} archivés")
+    return hot, archived_count
 
 
 class EmailAgent(BaseAgent):
@@ -1506,6 +1636,17 @@ class EmailAgent(BaseAgent):
                         M.logout()
                     except Exception:
                         pass
+
+            # Scan Gmail API en plus des comptes IMAP (boîte awelldonestudio@gmail.com)
+            try:
+                gmail_hot, gmail_archived = _scan_gmail_api(
+                    processed_uids, today_str, self._LEAD_DOMAINS
+                )
+                all_kept.extend(gmail_hot)
+                total_archived += gmail_archived
+                _save_processed_uids(processed_uids)
+            except Exception as e:
+                log.warning(f"auto_trier Gmail scan: {e}")
 
             return all_kept, total_archived
 
