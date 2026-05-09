@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📬 Inbox Triage — Welldone</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:       #0A0A0A;
+    --bg2:      #131313;
+    --bg3:      #1C1C1C;
+    --bg4:      #252525;
+    --border:   #2A2A2A;
+    --text:     #F0F0F0;
+    --muted:    #888888;
+    --dim:      #555555;
+    --green:    #4ADE80;
+    --green-bg: #134e2c;
+    --yellow:   #FBBF24;
+    --yellow-bg:#5c4310;
+    --red:      #F87171;
+    --red-bg:   #5c1a1a;
+    --blue:     #60A5FA;
+    --radius:   8px;
+  }
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, sans-serif;
+    font-weight: 400;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  .topbar {
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg2);
+  }
+  .topbar h1 {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .topbar h1 .emoji { margin-right: 6px; }
+  .topbar .meta {
+    color: var(--muted);
+    font-size: 12px;
+    display: flex;
+    gap: 16px;
+    align-items: center;
+  }
+  .topbar button.refresh {
+    background: var(--bg3);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .topbar button.refresh:hover { background: var(--bg4); border-color: #444; }
+
+  main {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+  .empty {
+    text-align: center;
+    padding: 80px 24px;
+    color: var(--muted);
+  }
+  .empty .big { font-size: 48px; margin-bottom: 16px; }
+  .empty .text { font-size: 14px; }
+
+  .email {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    margin-bottom: 12px;
+    transition: border-color 0.15s;
+  }
+  .email:hover { border-color: #3a3a3a; }
+  .email.snoozing { opacity: 0.4; transition: opacity 0.4s; }
+  .email .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 4px;
+  }
+  .email .from {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+  }
+  .email .meta-line {
+    color: var(--muted);
+    font-size: 11px;
+    white-space: nowrap;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .email .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.2px;
+    text-transform: uppercase;
+  }
+  .email .badge.host { background: #1e3a5f; color: #93c5fd; }
+  .email .badge.gmail { background: #4d1d1d; color: #fca5a5; }
+  .email .badge.reason { background: var(--bg4); color: var(--muted); text-transform: none; }
+
+  .email .subject {
+    font-size: 14px;
+    color: var(--text);
+    margin-bottom: 6px;
+    font-weight: 500;
+  }
+  .email .snippet {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 12px;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    line-height: 1.4;
+  }
+  .actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .btn {
+    background: var(--bg3);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 7px 13px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.15s;
+  }
+  .btn:hover { background: var(--bg4); }
+  .btn:disabled { opacity: 0.4; cursor: wait; }
+  .btn.green { border-color: var(--green); color: var(--green); }
+  .btn.green:hover { background: var(--green-bg); }
+  .btn.yellow { border-color: var(--yellow); color: var(--yellow); }
+  .btn.yellow:hover { background: var(--yellow-bg); }
+  .btn.red { border-color: var(--red); color: var(--red); }
+  .btn.red:hover { background: var(--red-bg); }
+  .btn.snooze { border-color: var(--dim); color: var(--muted); margin-left: auto; }
+  .btn.snooze:hover { background: var(--bg4); color: var(--text); }
+
+  /* Modal pour le draft généré */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    z-index: 100;
+    backdrop-filter: blur(4px);
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    max-width: 720px;
+    width: 100%;
+    max-height: 90vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .modal-header h2 {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .modal-header .mode-tag {
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .modal-header .close {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-size: 22px;
+    cursor: pointer;
+    padding: 0 8px;
+  }
+  .modal-body {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .modal-body .meta {
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 14px;
+  }
+  .modal-body textarea {
+    width: 100%;
+    min-height: 200px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.6;
+    resize: vertical;
+  }
+  .modal-footer {
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+  .modal-footer .open-gmail {
+    background: var(--green-bg);
+    color: var(--green);
+    border: 1px solid var(--green);
+    padding: 9px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    display: inline-block;
+  }
+  .modal-footer .open-gmail:hover { background: var(--green); color: var(--bg); }
+  .modal-footer .hint {
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  /* Loading state */
+  .loading-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--bg4);
+    border-top-color: var(--text);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--bg3);
+    color: var(--text);
+    padding: 12px 18px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    font-size: 13px;
+    z-index: 200;
+    transform: translateY(20px);
+    opacity: 0;
+    transition: all 0.25s;
+    max-width: 360px;
+  }
+  .toast.show { transform: translateY(0); opacity: 1; }
+  .toast.error { border-color: var(--red); color: var(--red); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1><span class="emoji">📬</span>Inbox Triage</h1>
+  <div class="meta">
+    <span id="status">—</span>
+    <button class="refresh" onclick="loadInbox()">↻ Refresh</button>
+  </div>
+</div>
+
+<main>
+  <div id="inbox"></div>
+</main>
+
+<div class="modal-overlay" id="modal" onclick="if(event.target===this) closeModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <h2 id="modal-title">Brouillon généré</h2>
+      </div>
+      <span class="mode-tag" id="modal-mode"></span>
+      <button class="close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="meta">
+        <strong>À :</strong> <span id="modal-to"></span><br>
+        <strong>Sujet :</strong> <span id="modal-subject"></span>
+      </div>
+      <textarea id="modal-text"></textarea>
+    </div>
+    <div class="modal-footer">
+      <span class="hint">Le brouillon est aussi dans Gmail Drafts. Modifie ici si besoin avant d'ouvrir Gmail.</span>
+      <a class="open-gmail" id="modal-open" target="_blank">Ouvrir dans Gmail →</a>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let CURRENT_EMAILS = [];
+
+async function loadInbox() {
+  $("status").textContent = "Chargement…";
+  $("inbox").innerHTML = '<div class="empty"><div class="big">⏳</div><div class="text">Scan IMAP + Gmail…</div></div>';
+  try {
+    const r = await fetch("/api/inbox");
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    CURRENT_EMAILS = d.emails;
+    $("status").textContent = `${d.count} email(s) à traiter`;
+    render(d.emails);
+  } catch (e) {
+    $("status").textContent = "Erreur";
+    $("inbox").innerHTML = `<div class="empty"><div class="big">❌</div><div class="text">${e.message}</div></div>`;
+  }
+}
+
+function render(emails) {
+  if (!emails.length) {
+    $("inbox").innerHTML = '<div class="empty"><div class="big">🎉</div><div class="text">Inbox HOT vide. Tout est traité.</div></div>';
+    return;
+  }
+  $("inbox").innerHTML = emails.map((e, i) => {
+    const dateShort = formatDate(e.date);
+    return `
+    <div class="email" id="email-${i}">
+      <div class="header">
+        <div class="from">${esc(e.from_raw)}</div>
+        <div class="meta-line">
+          <span class="badge ${e.account === 'Gmail' ? 'gmail' : 'host'}">${e.account}</span>
+          <span class="badge reason">${esc(e.reason)}</span>
+          <span>${dateShort}</span>
+        </div>
+      </div>
+      <div class="subject">${esc(e.subject)}</div>
+      <div class="snippet">${esc(e.snippet)}</div>
+      <div class="actions">
+        <button class="btn green" onclick="genDraft(${i}, 'court')">🟢 Court & cordial</button>
+        <button class="btn yellow" onclick="genDraft(${i}, 'info')">🟡 Demande info</button>
+        <button class="btn red" onclick="genDraft(${i}, 'decline')">🔴 Décline</button>
+        <button class="btn snooze" onclick="snooze(${i})" title="Marquer comme traité">✓ Fait</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+async function genDraft(idx, mode) {
+  const email = CURRENT_EMAILS[idx];
+  const card = $(`email-${idx}`);
+  const btns = card.querySelectorAll(".btn");
+  btns.forEach(b => b.disabled = true);
+  toast(`Génération brouillon (${mode})…`);
+  try {
+    const r = await fetch("/api/draft", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({...email, mode}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+
+    $("modal-title").textContent = "Brouillon généré";
+    $("modal-mode").textContent = labelMode(mode);
+    $("modal-mode").style.background = colorMode(mode).bg;
+    $("modal-mode").style.color = colorMode(mode).fg;
+    $("modal-to").textContent = email.from_raw;
+    $("modal-subject").textContent = "Re: " + email.subject;
+    $("modal-text").value = d.draft_text || "";
+    $("modal-open").href = d.gmail_url || "https://mail.google.com/mail/u/0/#drafts";
+    $("modal").classList.add("show");
+    toast("Brouillon prêt + draft Gmail créé");
+  } catch (e) {
+    toast("Erreur : " + e.message, true);
+  } finally {
+    btns.forEach(b => b.disabled = false);
+  }
+}
+
+async function snooze(idx) {
+  const email = CURRENT_EMAILS[idx];
+  const card = $(`email-${idx}`);
+  card.classList.add("snoozing");
+  try {
+    await fetch("/api/snooze", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({uid: email.uid}),
+    });
+    setTimeout(() => {
+      CURRENT_EMAILS = CURRENT_EMAILS.filter((_, i) => i !== idx);
+      render(CURRENT_EMAILS);
+      $("status").textContent = `${CURRENT_EMAILS.length} email(s) à traiter`;
+    }, 400);
+    toast("Marqué comme traité");
+  } catch (e) {
+    card.classList.remove("snoozing");
+    toast("Erreur : " + e.message, true);
+  }
+}
+
+function closeModal() { $("modal").classList.remove("show"); }
+
+function esc(s) {
+  const div = document.createElement("div");
+  div.textContent = s == null ? "" : String(s);
+  return div.innerHTML;
+}
+function formatDate(d) {
+  if (!d) return "";
+  try {
+    const dt = new Date(d);
+    const now = new Date();
+    const ms = now - dt;
+    const min = Math.floor(ms / 60000);
+    if (min < 60) return `il y a ${min}min`;
+    if (min < 60*24) return `il y a ${Math.floor(min/60)}h`;
+    if (min < 60*24*7) return `il y a ${Math.floor(min/(60*24))}j`;
+    return dt.toLocaleDateString("fr-CA");
+  } catch { return d; }
+}
+function labelMode(m) { return {court: "Court", info: "Demande info", decline: "Décline"}[m] || m; }
+function colorMode(m) { return {
+  court:   {bg: "#134e2c", fg: "#4ADE80"},
+  info:    {bg: "#5c4310", fg: "#FBBF24"},
+  decline: {bg: "#5c1a1a", fg: "#F87171"},
+}[m] || {bg: "#252525", fg: "#888"}; }
+
+let toastTimer;
+function toast(msg, isErr=false) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.toggle("error", isErr);
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 3500);
+}
+
+// Auto-load on page open
+loadInbox();
+// Auto-refresh toutes les 5 min
+setInterval(loadInbox, 5 * 60 * 1000);
+</script>
+</body>
+</html>
