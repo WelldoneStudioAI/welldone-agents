@@ -5,53 +5,46 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Inbox Triage">
-<meta name="theme-color" content="#000000">
-<title>Inbox Triage</title>
+<meta name="apple-mobile-web-app-title" content="Inbox">
+<meta name="theme-color" content="#0b0b10">
+<title>Inbox</title>
 <style>
   :root {
     --safe-top:    env(safe-area-inset-top);
     --safe-bot:    env(safe-area-inset-bottom);
-    --safe-left:   env(safe-area-inset-left);
-    --safe-right:  env(safe-area-inset-right);
 
-    --text:        rgba(255, 255, 255, 0.95);
-    --text-2:      rgba(255, 255, 255, 0.65);
-    --text-3:      rgba(255, 255, 255, 0.45);
+    --text:        rgba(255, 255, 255, 0.96);
+    --text-2:      rgba(235, 235, 245, 0.60);
+    --text-3:      rgba(235, 235, 245, 0.30);
 
-    --glass:       rgba(255, 255, 255, 0.06);
-    --glass-2:     rgba(255, 255, 255, 0.10);
-    --glass-3:     rgba(255, 255, 255, 0.14);
-    --glass-line:  rgba(255, 255, 255, 0.12);
+    /* Glass layers — iOS Liquid Glass : white tint translucide, pas color leak */
+    --glass-1:     rgba(255, 255, 255, 0.08);
+    --glass-2:     rgba(255, 255, 255, 0.14);
+    --glass-stroke-top:   rgba(255, 255, 255, 0.30);
+    --glass-stroke-bot:   rgba(255, 255, 255, 0.05);
+    --glass-shadow:       0 8px 32px rgba(0, 0, 0, 0.28);
+    --glass-highlight:    inset 0 1px 0 rgba(255, 255, 255, 0.20);
 
-    --green:       #34C759;
-    --green-bg:    rgba(52, 199, 89, 0.18);
-    --yellow:      #FF9F0A;
-    --yellow-bg:   rgba(255, 159, 10, 0.18);
+    --green:       #30D158;
+    --yellow:      #FFD60A;
     --red:         #FF453A;
-    --red-bg:      rgba(255, 69, 58, 0.18);
     --blue:        #0A84FF;
-    --blue-bg:     rgba(10, 132, 255, 0.18);
-    --pink:        #FF375F;
-    --purple:      #BF5AF2;
 
-    --r-card:      24px;
+    --r-card:      22px;
     --r-pill:      999px;
-    --r-btn:       16px;
+    --r-btn:       14px;
     --r-sheet:     32px;
   }
 
   * {
     box-sizing: border-box;
-    margin: 0;
-    padding: 0;
+    margin: 0; padding: 0;
     -webkit-tap-highlight-color: transparent;
   }
 
   html, body {
-    background: transparent;
     color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro', 'Inter', system-ui, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
     font-weight: 400;
     line-height: 1.4;
     min-height: 100vh;
@@ -60,40 +53,63 @@
     text-rendering: optimizeLegibility;
   }
 
-  /* Background ambient — blobs floue colorés (style iOS Control Center) */
-  .bg-stage {
-    position: fixed;
-    inset: 0;
-    z-index: -10;
-    overflow: hidden;
-    background: linear-gradient(180deg, #0c0a14 0%, #050505 100%);
+  /* Wallpaper iOS-like : couche douce, fixed, pas animée */
+  body {
+    background:
+      radial-gradient(ellipse 80% 60% at 70% 8%,  rgba(118, 86, 192, 0.45), transparent 65%),
+      radial-gradient(ellipse 70% 50% at 20% 92%, rgba(48, 116, 196, 0.42), transparent 65%),
+      radial-gradient(ellipse 60% 40% at 90% 60%, rgba(218, 124, 158, 0.25), transparent 60%),
+      linear-gradient(180deg, #0b0b14 0%, #060608 100%);
+    background-attachment: fixed;
   }
-  .blob {
-    position: absolute;
-    border-radius: 50%;
-    filter: blur(90px);
-    opacity: 0.55;
-    animation: blob 24s ease-in-out infinite;
-  }
-  .blob.b1 { width: 540px; height: 540px; background: #6366F1; top: -180px; left: -120px; animation-delay: 0s; }
-  .blob.b2 { width: 460px; height: 460px; background: #EC4899; top: 30%;  right: -180px; animation-delay: -8s; }
-  .blob.b3 { width: 600px; height: 600px; background: #06B6D4; bottom: -260px; left: 40%; animation-delay: -16s; }
-  @keyframes blob {
-    0%, 100% { transform: translate(0, 0) scale(1); }
-    33% { transform: translate(40px, -30px) scale(1.05); }
-    66% { transform: translate(-30px, 30px) scale(0.95); }
+  /* Subtle grain / noise pour casser les bandes de gradient — invisible mais rend le glass plus crédible */
+  body::before {
+    content: '';
+    position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    opacity: 0.32;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1   0 0 0 0 1   0 0 0 0 1   0 0 0 0.18 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
   }
 
-  /* Topbar glass */
+  /* ── Glass primitive ──────────────────────────────────────────────────────
+     Un glass iOS = 3 couches : tint translucide + backdrop-filter + rim light gradient
+     Le rim light est un border en background-image avec mask trick pour ne styler
+     que le contour (gradient haut clair, bas sombre — comme du verre real).
+  */
+  .glass {
+    background: var(--glass-1);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    border-radius: var(--r-card);
+    position: relative;
+    box-shadow: var(--glass-highlight), var(--glass-shadow);
+  }
+  /* Rim light : 1px de border avec gradient haut→bas */
+  .glass::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(180deg, var(--glass-stroke-top) 0%, var(--glass-stroke-bot) 100%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    pointer-events: none;
+  }
+  .glass-2 { background: var(--glass-2); }
+  .glass-thin { backdrop-filter: blur(28px) saturate(180%); -webkit-backdrop-filter: blur(28px) saturate(180%); }
+
+  /* ── Topbar ─────────────────────────────────────────────────────────────── */
   .topbar {
     position: sticky;
     top: 0;
     z-index: 50;
-    background: rgba(8, 8, 10, 0.55);
-    backdrop-filter: blur(40px) saturate(180%);
-    -webkit-backdrop-filter: blur(40px) saturate(180%);
     padding: calc(var(--safe-top) + 14px) 16px 14px;
-    border-bottom: 0.5px solid var(--glass-line);
+    /* glass thin pour le topbar — moins de flou */
+    background: rgba(11, 11, 20, 0.55);
+    backdrop-filter: blur(30px) saturate(180%);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
   }
   .topbar-row {
     display: flex;
@@ -102,77 +118,77 @@
     gap: 12px;
   }
   .topbar h1 {
-    font-size: 22px;
+    font-size: 28px;
     font-weight: 700;
-    letter-spacing: -0.4px;
+    letter-spacing: -0.6px;
+    line-height: 1.1;
   }
   .topbar .count {
     font-size: 13px;
     color: var(--text-2);
-    margin-top: 2px;
-    font-weight: 500;
+    margin-top: 3px;
+    font-weight: 400;
+    letter-spacing: -0.1px;
   }
   .icon-btn {
-    width: 40px;
-    height: 40px;
+    width: 36px; height: 36px;
     border-radius: 50%;
     background: var(--glass-2);
-    border: 0.5px solid var(--glass-line);
+    border: 0.5px solid rgba(255,255,255,0.18);
     color: var(--text);
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    display: flex; align-items: center; justify-content: center;
     cursor: pointer;
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
-    font-size: 18px;
     transition: transform 0.15s, background 0.15s;
   }
-  .icon-btn:active { transform: scale(0.92); background: var(--glass-3); }
+  .icon-btn:active { transform: scale(0.92); background: rgba(255,255,255,0.20); }
   .icon-btn.spinning svg { animation: spin 0.6s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
   main {
-    padding: 16px;
-    padding-bottom: calc(var(--safe-bot) + 24px);
+    padding: 14px 16px calc(var(--safe-bot) + 24px);
     max-width: 720px;
     margin: 0 auto;
   }
 
-  /* Empty / loading states */
+  /* ── States ─────────────────────────────────────────────────────────────── */
   .state {
     text-align: center;
     padding: 80px 16px;
     color: var(--text-2);
   }
-  .state .ico { font-size: 56px; margin-bottom: 16px; opacity: 0.7; }
-  .state .text { font-size: 15px; }
+  .state .ico { font-size: 52px; margin-bottom: 14px; opacity: 0.7; }
+  .state .text { font-size: 15px; line-height: 1.4; }
 
-  /* Email card — Liquid Glass */
+  /* ── Email card ─────────────────────────────────────────────────────────── */
   .card {
-    background: var(--glass);
-    backdrop-filter: blur(50px) saturate(180%);
-    -webkit-backdrop-filter: blur(50px) saturate(180%);
-    border: 0.5px solid var(--glass-line);
+    /* glass primitive */
+    background: var(--glass-1);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
     border-radius: var(--r-card);
-    padding: 16px;
-    margin-bottom: 12px;
     position: relative;
-    overflow: hidden;
+    box-shadow: var(--glass-highlight), var(--glass-shadow);
+    padding: 14px 14px 12px;
+    margin-bottom: 10px;
     transition: opacity 0.4s, transform 0.3s;
-  }
-  .card.snoozing {
-    opacity: 0;
-    transform: translateX(80px);
   }
   .card::before {
     content: '';
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(180deg, var(--glass-stroke-top) 0%, var(--glass-stroke-bot) 100%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    pointer-events: none;
+  }
+  .card.snoozing {
+    opacity: 0;
+    transform: translateX(80px);
   }
 
   .card-meta-row {
@@ -186,27 +202,37 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 4px 10px;
+    padding: 3px 9px;
     border-radius: var(--r-pill);
     font-size: 11px;
     font-weight: 600;
-    letter-spacing: -0.2px;
-    line-height: 1;
+    letter-spacing: -0.1px;
+    line-height: 1.4;
+    /* glass-on-glass : trans white + border subtile */
+    background: rgba(255,255,255,0.10);
+    color: var(--text-2);
+    border: 0.5px solid rgba(255,255,255,0.10);
   }
-  .pill.host  { background: var(--blue-bg);  color: var(--blue); }
-  .pill.gmail { background: var(--red-bg);   color: var(--red); }
-  .pill.reason { background: var(--glass-2); color: var(--text-2); font-weight: 500; }
-  .pill.time   { background: transparent; color: var(--text-3); font-weight: 500; padding: 4px 0; margin-left: auto; }
+  .pill.account { color: var(--text); }
+  .pill.account.gmail-account { color: rgba(255, 200, 200, 0.95); }
+  .pill.time {
+    background: transparent;
+    border: none;
+    color: var(--text-3);
+    font-weight: 500;
+    margin-left: auto;
+    padding: 3px 0;
+  }
 
   .card-from {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text);
-    margin-bottom: 2px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-2);
+    margin-bottom: 1px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    letter-spacing: -0.2px;
+    letter-spacing: -0.1px;
   }
   .card-subject {
     font-size: 16px;
@@ -219,25 +245,27 @@
   .card-snippet {
     font-size: 14px;
     color: var(--text-2);
-    line-height: 1.4;
-    margin-bottom: 14px;
+    line-height: 1.45;
+    margin-bottom: 12px;
     overflow: hidden;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
+    letter-spacing: -0.2px;
   }
 
   .card-actions {
     display: grid;
     grid-template-columns: repeat(3, 1fr) auto;
-    gap: 8px;
+    gap: 6px;
   }
 
+  /* Boutons : glass blanc translucide + dot coloré pour le sens */
   .pill-btn {
-    background: var(--glass-2);
-    border: 0.5px solid var(--glass-line);
+    background: rgba(255,255,255,0.08);
+    border: 0.5px solid rgba(255,255,255,0.16);
     color: var(--text);
-    padding: 11px 8px;
+    padding: 9px 8px;
     border-radius: var(--r-btn);
     cursor: pointer;
     font-family: inherit;
@@ -245,56 +273,55 @@
     font-weight: 600;
     letter-spacing: -0.2px;
     transition: all 0.15s;
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 4px;
-    min-height: 44px;
+    gap: 5px;
+    min-height: 38px;
     white-space: nowrap;
   }
-  .pill-btn:active { transform: scale(0.96); }
-  .pill-btn:disabled { opacity: 0.4; cursor: wait; }
-  .pill-btn.green  { background: var(--green-bg);  color: var(--green);  border-color: rgba(52, 199, 89, 0.25); }
-  .pill-btn.yellow { background: var(--yellow-bg); color: var(--yellow); border-color: rgba(255, 159, 10, 0.25); }
-  .pill-btn.red    { background: var(--red-bg);    color: var(--red);    border-color: rgba(255, 69, 58, 0.25); }
-  .pill-btn.snooze { width: 44px; padding: 0; color: var(--text-2); }
-
-  .pill-btn .label-mobile { display: none; }
-  @media (max-width: 420px) {
-    .pill-btn .label-full { display: none; }
-    .pill-btn .label-mobile { display: inline; }
+  .pill-btn:active { transform: scale(0.96); background: rgba(255,255,255,0.16); }
+  .pill-btn:disabled { opacity: 0.5; cursor: wait; }
+  .pill-btn .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
   }
+  .pill-btn.green  .dot { background: var(--green); box-shadow: 0 0 8px rgba(48, 209, 88, 0.5); }
+  .pill-btn.yellow .dot { background: var(--yellow); box-shadow: 0 0 8px rgba(255, 214, 10, 0.4); }
+  .pill-btn.red    .dot { background: var(--red); box-shadow: 0 0 8px rgba(255, 69, 58, 0.5); }
+  .pill-btn.snooze { width: 38px; padding: 0; color: var(--text-3); }
+  .pill-btn.snooze svg { width: 16px; height: 16px; }
 
-  /* Bottom sheet pour le draft généré */
+  /* ── Bottom sheet ───────────────────────────────────────────────────────── */
   .sheet-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.5);
+    background: rgba(0,0,0,0.4);
     z-index: 99;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.3s;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
   }
   .sheet-backdrop.show { opacity: 1; pointer-events: auto; }
 
   .sheet {
     position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    left: 0; right: 0; bottom: 0;
     z-index: 100;
-    background: rgba(20, 20, 25, 0.65);
-    backdrop-filter: blur(60px) saturate(180%);
-    -webkit-backdrop-filter: blur(60px) saturate(180%);
+    background: rgba(28, 28, 36, 0.72);
+    backdrop-filter: blur(60px) saturate(200%);
+    -webkit-backdrop-filter: blur(60px) saturate(200%);
     border-top-left-radius: var(--r-sheet);
     border-top-right-radius: var(--r-sheet);
-    border-top: 0.5px solid var(--glass-line);
+    border-top: 0.5px solid rgba(255,255,255,0.20);
+    box-shadow: 0 -16px 48px rgba(0,0,0,0.5);
     transform: translateY(100%);
-    transition: transform 0.4s cubic-bezier(0.32, 0.72, 0, 1);
+    transition: transform 0.42s cubic-bezier(0.32, 0.72, 0, 1);
     max-height: 92vh;
     display: flex;
     flex-direction: column;
@@ -304,13 +331,13 @@
   .sheet-grabber {
     width: 36px;
     height: 5px;
-    background: rgba(255,255,255,0.3);
+    background: rgba(255,255,255,0.30);
     border-radius: 3px;
-    margin: 8px auto;
+    margin: 8px auto 4px;
   }
   .sheet-header {
-    padding: 8px 20px 16px;
-    border-bottom: 0.5px solid var(--glass-line);
+    padding: 10px 20px 14px;
+    border-bottom: 0.5px solid rgba(255,255,255,0.10);
   }
   .sheet-header-row {
     display: flex;
@@ -320,25 +347,29 @@
   }
   .sheet-title {
     font-size: 17px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: -0.3px;
   }
   .sheet-mode {
-    padding: 5px 12px;
+    padding: 4px 11px;
     border-radius: var(--r-pill);
     font-size: 12px;
     font-weight: 600;
     letter-spacing: -0.1px;
+    background: rgba(255,255,255,0.10);
+    border: 0.5px solid rgba(255,255,255,0.16);
+    display: inline-flex; align-items: center; gap: 5px;
   }
+  .sheet-mode .dot { width: 7px; height: 7px; border-radius: 50%; }
   .sheet-meta {
-    margin-top: 10px;
+    margin-top: 8px;
     color: var(--text-2);
     font-size: 13px;
     line-height: 1.5;
   }
   .sheet-meta strong { color: var(--text); font-weight: 600; }
   .sheet-body {
-    padding: 16px 20px;
+    padding: 14px 20px;
     overflow-y: auto;
     flex: 1;
     -webkit-overflow-scrolling: touch;
@@ -346,43 +377,42 @@
   .sheet-body textarea {
     width: 100%;
     min-height: 200px;
-    background: rgba(0,0,0,0.25);
+    background: rgba(0,0,0,0.30);
     color: var(--text);
-    border: 0.5px solid var(--glass-line);
-    border-radius: 18px;
-    padding: 16px;
+    border: 0.5px solid rgba(255,255,255,0.12);
+    border-radius: 16px;
+    padding: 14px;
     font-family: inherit;
     font-size: 15px;
-    line-height: 1.5;
+    line-height: 1.55;
     resize: none;
     outline: none;
+    letter-spacing: -0.2px;
   }
-  .sheet-body textarea:focus { border-color: rgba(10, 132, 255, 0.6); background: rgba(10, 132, 255, 0.06); }
+  .sheet-body textarea:focus { border-color: rgba(10, 132, 255, 0.55); }
 
   .sheet-footer {
-    padding: 12px 20px 16px;
-    border-top: 0.5px solid var(--glass-line);
+    padding: 12px 20px 14px;
+    border-top: 0.5px solid rgba(255,255,255,0.10);
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
   }
   .sheet-footer .open-gmail {
     background: var(--blue);
     color: white;
     border: none;
-    padding: 14px 20px;
+    padding: 13px 20px;
     border-radius: var(--r-btn);
     cursor: pointer;
     font-family: inherit;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
     letter-spacing: -0.3px;
     text-decoration: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    display: flex; align-items: center; justify-content: center;
     gap: 6px;
-    min-height: 50px;
+    min-height: 48px;
     transition: transform 0.15s, opacity 0.15s;
   }
   .sheet-footer .open-gmail:active { transform: scale(0.97); opacity: 0.85; }
@@ -391,21 +421,23 @@
     font-size: 11px;
     text-align: center;
     line-height: 1.4;
+    letter-spacing: -0.1px;
   }
 
-  /* Toast iOS-style */
+  /* ── Toast ───────────────────────────────────────────────────────────────── */
   .toast {
     position: fixed;
-    top: calc(var(--safe-top) + 70px);
+    top: calc(var(--safe-top) + 76px);
     left: 50%;
     transform: translateX(-50%) translateY(-30px);
-    background: rgba(28, 28, 30, 0.85);
-    backdrop-filter: blur(40px);
-    -webkit-backdrop-filter: blur(40px);
+    background: rgba(28, 28, 36, 0.85);
+    backdrop-filter: blur(40px) saturate(200%);
+    -webkit-backdrop-filter: blur(40px) saturate(200%);
     color: var(--text);
-    padding: 11px 18px;
+    padding: 10px 18px;
     border-radius: var(--r-pill);
-    border: 0.5px solid var(--glass-line);
+    border: 0.5px solid rgba(255,255,255,0.16);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
     font-size: 13px;
     font-weight: 500;
     letter-spacing: -0.2px;
@@ -419,30 +451,17 @@
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .toast.error { color: var(--red); }
 
-  /* Spinner inline */
   .spin-ico {
     display: inline-block;
-    width: 14px;
-    height: 14px;
+    width: 12px; height: 12px;
     border: 2px solid currentColor;
     border-top-color: transparent;
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
   }
-
-  /* Status bar fix mobile Safari */
-  @supports(padding: max(0px)) {
-    body { padding-top: 0; }
-  }
 </style>
 </head>
 <body>
-
-<div class="bg-stage">
-  <div class="blob b1"></div>
-  <div class="blob b2"></div>
-  <div class="blob b3"></div>
-</div>
 
 <div class="topbar">
   <div class="topbar-row">
@@ -451,7 +470,7 @@
       <div class="count" id="count">—</div>
     </div>
     <button class="icon-btn" id="refresh-btn" onclick="loadInbox(true)" aria-label="Refresh">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="23 4 23 10 17 10"></polyline>
         <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"></path>
       </svg>
@@ -467,11 +486,11 @@
   <div class="sheet-header">
     <div class="sheet-header-row">
       <div class="sheet-title">Brouillon</div>
-      <span class="sheet-mode" id="sheet-mode"></span>
+      <span class="sheet-mode" id="sheet-mode"><span class="dot" id="sheet-mode-dot"></span><span id="sheet-mode-label"></span></span>
     </div>
     <div class="sheet-meta">
       <strong id="sheet-to"></strong><br>
-      <span id="sheet-subject" style="color: var(--text-2);"></span>
+      <span id="sheet-subject"></span>
     </div>
   </div>
   <div class="sheet-body">
@@ -480,9 +499,9 @@
   <div class="sheet-footer">
     <a class="open-gmail" id="sheet-open" target="_blank">
       Ouvrir dans Gmail
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
     </a>
-    <div class="hint">Le brouillon est aussi dans Gmail Drafts<br>Tu peux le peaufiner ici avant d'ouvrir.</div>
+    <div class="hint">Le brouillon est aussi sauvegardé dans Gmail Drafts.</div>
   </div>
 </div>
 
@@ -513,7 +532,7 @@ async function loadInbox(force = false) {
 
 function updateCount() {
   const n = CURRENT.length;
-  $("count").textContent = n === 0 ? "Inbox vide" : `${n} email${n > 1 ? 's' : ''} à traiter`;
+  $("count").textContent = n === 0 ? "Boîte vide" : `${n} email${n > 1 ? 's' : ''} à traiter`;
 }
 
 function render(emails) {
@@ -524,24 +543,20 @@ function render(emails) {
   $("inbox").innerHTML = emails.map((e, i) => `
     <div class="card" id="card-${i}">
       <div class="card-meta-row">
-        <span class="pill ${e.account === 'Gmail' ? 'gmail' : 'host'}">${e.account === 'Gmail' ? 'Gmail' : 'Hostinger'}</span>
-        <span class="pill reason">${esc(e.reason)}</span>
+        <span class="pill account ${e.account === 'Gmail' ? 'gmail-account' : ''}">${e.account === 'Gmail' ? 'Gmail' : 'Hostinger'}</span>
+        <span class="pill">${esc(e.reason)}</span>
         <span class="pill time">${formatDate(e.date)}</span>
       </div>
       <div class="card-from">${esc(e.from_raw)}</div>
       <div class="card-subject">${esc(e.subject)}</div>
       <div class="card-snippet">${esc(e.snippet)}</div>
       <div class="card-actions">
-        <button class="pill-btn green"  onclick="genDraft(${i}, 'court')">
-          <span class="label-full">Court</span><span class="label-mobile">🟢</span>
+        <button class="pill-btn green"  onclick="genDraft(${i}, 'court')"><span class="dot"></span>Court</button>
+        <button class="pill-btn yellow" onclick="genDraft(${i}, 'info')"><span class="dot"></span>Info</button>
+        <button class="pill-btn red"    onclick="genDraft(${i}, 'decline')"><span class="dot"></span>Décline</button>
+        <button class="pill-btn snooze" onclick="snooze(${i})" aria-label="Marquer fait">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
         </button>
-        <button class="pill-btn yellow" onclick="genDraft(${i}, 'info')">
-          <span class="label-full">Info</span><span class="label-mobile">🟡</span>
-        </button>
-        <button class="pill-btn red"    onclick="genDraft(${i}, 'decline')">
-          <span class="label-full">Décline</span><span class="label-mobile">🔴</span>
-        </button>
-        <button class="pill-btn snooze" onclick="snooze(${i})" aria-label="Marquer fait">✓</button>
       </div>
     </div>
   `).join("");
@@ -551,7 +566,7 @@ async function genDraft(idx, mode) {
   const email = CURRENT[idx];
   const card = $(`card-${idx}`);
   card.querySelectorAll(".pill-btn").forEach(b => b.disabled = true);
-  toast(`Génération… <span class="spin-ico"></span>`);
+  toast(`Génération <span class="spin-ico"></span>`);
   try {
     const r = await fetch("/api/draft", {
       method: "POST",
@@ -561,9 +576,8 @@ async function genDraft(idx, mode) {
     const d = await r.json();
     if (d.error) throw new Error(d.error);
 
-    $("sheet-mode").textContent = labelMode(mode);
-    $("sheet-mode").style.background = colorMode(mode).bg;
-    $("sheet-mode").style.color = colorMode(mode).fg;
+    $("sheet-mode-label").textContent = labelMode(mode);
+    $("sheet-mode-dot").style.background = colorMode(mode);
     $("sheet-to").textContent = email.from_raw;
     $("sheet-subject").textContent = "Re: " + email.subject;
     $("sheet-text").value = d.draft_text || "";
@@ -625,20 +639,14 @@ function formatDate(d) {
     const ms = new Date() - dt;
     const min = Math.floor(ms / 60000);
     if (min < 1) return "à l'instant";
-    if (min < 60) return `${min}min`;
-    if (min < 60*24) return `${Math.floor(min/60)}h`;
-    if (min < 60*24*7) return `${Math.floor(min/(60*24))}j`;
+    if (min < 60) return `${min} min`;
+    if (min < 60*24) return `${Math.floor(min/60)} h`;
+    if (min < 60*24*7) return `${Math.floor(min/(60*24))} j`;
     return dt.toLocaleDateString("fr-CA", {month:"short", day:"numeric"});
   } catch { return d; }
 }
 function labelMode(m) { return {court: "Court", info: "Info", decline: "Décline"}[m] || m; }
-function colorMode(m) {
-  return {
-    court:   {bg: "rgba(52, 199, 89, 0.22)",  fg: "#34C759"},
-    info:    {bg: "rgba(255, 159, 10, 0.22)", fg: "#FF9F0A"},
-    decline: {bg: "rgba(255, 69, 58, 0.22)",  fg: "#FF453A"},
-  }[m] || {bg: "rgba(255,255,255,0.1)", fg: "#fff"};
-}
+function colorMode(m) { return {court: "#30D158", info: "#FFD60A", decline: "#FF453A"}[m] || "#fff"; }
 
 let toastTimer;
 function toast(html, isErr=false) {
@@ -647,10 +655,10 @@ function toast(html, isErr=false) {
   t.classList.toggle("error", isErr);
   t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("show"), isErr ? 4000 : 2500);
+  toastTimer = setTimeout(() => t.classList.remove("show"), isErr ? 4000 : 2200);
 }
 
-// Swipe-down sur le sheet pour le fermer (gesture iOS-like)
+// Sheet swipe-down to close
 let sheetTouchY = null;
 $("sheet").addEventListener("touchstart", e => {
   if (e.target.closest(".sheet-body, textarea, button, a")) return;
@@ -669,11 +677,9 @@ $("sheet").addEventListener("touchend", e => {
   sheetTouchY = null;
 }, {passive: true});
 
-// Pull-to-refresh très simple
+// Pull-to-refresh basique
 let prTouch = null;
-window.addEventListener("touchstart", e => {
-  if (window.scrollY === 0) prTouch = e.touches[0].clientY;
-}, {passive: true});
+window.addEventListener("touchstart", e => { if (window.scrollY === 0) prTouch = e.touches[0].clientY; }, {passive: true});
 window.addEventListener("touchend", e => {
   if (prTouch === null) return;
   const dy = e.changedTouches[0].clientY - prTouch;
@@ -681,12 +687,10 @@ window.addEventListener("touchend", e => {
   prTouch = null;
 }, {passive: true});
 
-// Init
+window.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet(); });
+
 loadInbox();
 setInterval(() => loadInbox(false), 5 * 60 * 1000);
-
-// Esc pour fermer le sheet
-window.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet(); });
 </script>
 </body>
 </html>
