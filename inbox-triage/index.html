@@ -53,13 +53,13 @@
     text-rendering: optimizeLegibility;
   }
 
-  /* Wallpaper iOS-like : couche douce, fixed, pas animée */
+  /* Wallpaper iOS-like : monochrome élégant, fixed, sans couleurs criardes.
+     Léger highlight white au top pour donner de la profondeur au glass. */
   body {
     background:
-      radial-gradient(ellipse 80% 60% at 70% 8%,  rgba(118, 86, 192, 0.45), transparent 65%),
-      radial-gradient(ellipse 70% 50% at 20% 92%, rgba(48, 116, 196, 0.42), transparent 65%),
-      radial-gradient(ellipse 60% 40% at 90% 60%, rgba(218, 124, 158, 0.25), transparent 60%),
-      linear-gradient(180deg, #0b0b14 0%, #060608 100%);
+      radial-gradient(ellipse 90% 55% at 50% 0%, rgba(255,255,255,0.05), transparent 55%),
+      radial-gradient(ellipse 70% 50% at 50% 100%, rgba(255,255,255,0.02), transparent 60%),
+      linear-gradient(180deg, #0d0d11 0%, #050507 100%);
     background-attachment: fixed;
   }
   /* Subtle grain / noise pour casser les bandes de gradient — invisible mais rend le glass plus crédible */
