@@ -1667,19 +1667,16 @@ class EmailAgent(BaseAgent):
         if not kept:
             return ""
 
-        # Construire la notif Telegram avec la liste des HOT (groupés par raison)
-        # Format : `🔔 *3 emails* — Robert Dupont · Maxime Walter (contact connu) + 1 autre`
-        lines = [f"🔔 *{len(kept)} email(s) à voir*"]
-        # Limiter à 10 dans la notif pour pas spammer
+        # Construire la notif Telegram en TEXTE BRUT (plain).
+        # Pas de Markdown : tout char user-input (sender, subject) peut casser le parser
+        # avec "Can't parse entities" et générer un cycle d'erreurs Telegram.
+        lines = [f"🔔 {len(kept)} email(s) à voir"]
         for uid_s, from_raw, subject, label, reason in kept[:10]:
-            sender_display = (from_raw[:55] + "…") if len(from_raw) > 55 else from_raw
-            subj_display = (subject[:60] + "…") if len(subject) > 60 else subject
-            # Échapper Markdown problématique (* _ [ `)
-            sender_clean = sender_display.replace("*", "").replace("_", "").replace("[", "(").replace("]", ")").replace("`", "'")
-            subj_clean = subj_display.replace("*", "").replace("_", "").replace("[", "(").replace("]", ")").replace("`", "'")
-            lines.append(f"• _{reason}_ — {sender_clean}\n   {subj_clean}")
+            sender = (from_raw[:55] + "…") if len(from_raw) > 55 else from_raw
+            subj = (subject[:60] + "…") if len(subject) > 60 else subject
+            lines.append(f"• [{reason}] {sender}\n   {subj}")
         if len(kept) > 10:
-            lines.append(f"_...+{len(kept) - 10} autre(s)_")
+            lines.append(f"...+{len(kept) - 10} autre(s)")
 
         return "\n".join(lines)
 

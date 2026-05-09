@@ -26,9 +26,11 @@ async def _run_scheduled_job(agent_name: str, command: str, telegram_bot=None, c
     try:
         result = await dispatch(agent_name, command)
         log.info(f"scheduler: {agent_name}.{command} done")
-        # Notifier Telegram seulement si le résultat est non-vide (évite le spam "rien à faire")
+        # Notifier Telegram seulement si le résultat est non-vide (évite le spam "rien à faire").
+        # Pas de parse_mode : le résultat peut contenir n'importe quel char (sender, subject)
+        # qui casserait Markdown V1 avec "Can't parse entities" → cycle d'erreurs Telegram.
         if telegram_bot and chat_id and result and result.strip():
-            await telegram_bot.send_message(chat_id=chat_id, text=f"⏰ *Tâche auto:* /{agent_name} {command}\n\n{result}", parse_mode="Markdown")
+            await telegram_bot.send_message(chat_id=chat_id, text=f"⏰ Tâche auto: /{agent_name} {command}\n\n{result}")
     except Exception as e:
         msg = f"❌ Erreur tâche auto {agent_name}.{command}: {e}"
         log.error(msg)
