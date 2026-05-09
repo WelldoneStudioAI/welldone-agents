@@ -374,17 +374,26 @@ def _is_hot_email(msg, sender: str, lead_domains: tuple[str, ...]) -> tuple[bool
     Les leads référés sérieux passent par Cal.com / formulaire site (③) ou par un
     contact qui prévient JP avant l'email.
     """
-    # ① Whitelist
+    # ① Whitelist (passe au-dessus de tout, même bulk)
     if sender in _KNOWN_CONTACTS:
         return True, "contact connu"
 
-    # ② Adresse de destination = ia@*
+    # Pré-filtre bulk : appliqué avant ② et ③ pour éviter les transactionnels
+    # type "Apple <noreply@apple.com>" qui passent en HOT parce que destination = ia@*.
+    # IMPORTANT : on check les VRAIS headers (msg.get), PAS str(msg) qui scanne aussi le
+    # body et fait des faux positifs (ex: un body contenant le mot "list-id").
+    is_bulk_headers = bool(
+        msg.get("list-unsubscribe") or msg.get("list-id") or msg.get("precedence")
+    )
+    is_bulk = is_bulk_headers or _is_bulk_by_sender(sender)
+
+    # ② Adresse de destination = ia@* (sauf si bulk auto-confirm)
     to_field = (msg.get("To", "") + " " + msg.get("Cc", "") + " " + msg.get("Delivered-To", "")).lower()
-    if "ia@" in to_field:
+    if "ia@" in to_field and not is_bulk:
         return True, "automatisation IA"
 
     # ③ Sender ∈ lead domains (cal/calendly/awelldone/framer)
-    if any(d in sender for d in lead_domains):
+    if any(d in sender for d in lead_domains) and not is_bulk:
         return True, "lead automatique (RDV ou formulaire)"
 
     return False, ""

@@ -270,7 +270,7 @@ CONSIGNES STRICTES :
 - Texte plain, prêt à copier-coller
 """
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={GEMINI_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_KEY}"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.7, "maxOutputTokens": 600},
@@ -342,6 +342,20 @@ def _get_inbox_cached(force: bool = False) -> list[dict]:
 
         # Scan complet
         emails = _scan_hostinger() + _scan_gmail()
+
+        # Filtrer les self-sender (JP s'envoie à lui-même = bruit)
+        SELF_SENDERS = {"awelldonestudio@gmail.com", "jptanguay@awelldone.com",
+                        "jptanguay.awelldone@gmail.com", "hello@awelldone.com",
+                        "hello@awelldone.studio", "hello@welldone.archi"}
+        emails = [e for e in emails if e.get("sender", "").lower() not in SELF_SENDERS]
+
+        # Dédoublonner par (subject_normalisé, sender) — garde le plus récent
+        seen = {}
+        for e in emails:
+            key = ((e.get("subject", "") or "").strip().lower(), e.get("sender", ""))
+            if key not in seen:
+                seen[key] = e
+        emails = list(seen.values())
 
         def date_key(e):
             try:
