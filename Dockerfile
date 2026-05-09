@@ -11,5 +11,6 @@ COPY health.py .
 COPY core/ core/
 COPY agents/ agents/
 COPY bot/ bot/
+COPY templates/ templates/
 
 CMD ["python", "main.py"]

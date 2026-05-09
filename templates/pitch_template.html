@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Plan de match — {{ client_entreprise }} · {{ client_nom }}</title>
+<style>
+  @page { size: letter; margin: 0; }
+
+  :root {
+    --bg: #0a0a0c;
+    --bg-elev: #131318;
+    --bg-elev-hi: #1a1a21;
+    --text: #f3f3f6;
+    --text-muted: #9b9ba3;
+    --text-subtle: #6a6a72;
+    --line: rgba(255,255,255,0.08);
+    --line-strong: rgba(255,255,255,0.16);
+    --accent: {{ accent }};
+    --accent-bright: {{ accent_bright }};
+    --accent-soft: rgba({{ accent_rgb }},0.12);
+    --accent-soft-strong: rgba({{ accent_rgb }},0.22);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+    letter-spacing: -0.005em;
+  }
+
+  .page {
+    width: 8.5in;
+    height: 11in;
+    padding: 0.75in;
+    background: var(--bg);
+    position: relative;
+    overflow: hidden;
+    page-break-after: always;
+  }
+  .page:last-child { page-break-after: auto; }
+
+  .page::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      radial-gradient(ellipse 60% 40% at 50% -5%, rgba({{ accent_rgb }},0.08), transparent 70%),
+      radial-gradient(ellipse 40% 30% at 100% 0%, rgba({{ accent_rgb }},0.04), transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .page > * { position: relative; z-index: 1; }
+
+  .brand {
+    display: inline-flex; align-items: center; gap: 9px;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.2em;
+    text-transform: uppercase; color: var(--text-muted);
+  }
+  .brand-dot {
+    display: inline-block; width: 6px; height: 6px;
+    border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 0 3px rgba({{ accent_rgb }},0.16), 0 0 14px rgba({{ accent_rgb }},0.42);
+  }
+
+  .page-num {
+    position: absolute; bottom: 0.5in; right: 0.75in;
+    font-size: 10px; color: var(--text-subtle); letter-spacing: 0.08em;
+  }
+
+  /* PAGE 1 — COUVERTURE */
+  .cover { display: flex; flex-direction: column; height: 100%; }
+  .cover-top { flex-shrink: 0; }
+  .cover-mid { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+  .cover-bottom { flex-shrink: 0; }
+
+  .cover-eyebrow {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--accent);
+    margin: 0 0 14px; display: flex; align-items: center; gap: 10px;
+  }
+  .cover-eyebrow::after {
+    content: ""; flex: 1; height: 1px;
+    background: linear-gradient(90deg, var(--accent), transparent);
+    max-width: 200px;
+  }
+
+  .cover h1 {
+    font-size: 48px; line-height: 1.04; font-weight: 600;
+    letter-spacing: -0.03em; margin: 0 0 22px;
+    color: var(--text); max-width: 5.8in;
+  }
+  .cover h1 strong { color: var(--accent); font-weight: 600; }
+
+  .cover-tagline {
+    font-size: 17px; color: var(--text-muted); line-height: 1.55;
+    max-width: 5in; margin: 0 0 38px;
+  }
+
+  .cover-meta {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 22px 36px;
+    padding-top: 26px; border-top: 1px solid var(--line); max-width: 5.5in;
+  }
+  .cover-meta-row { display: flex; flex-direction: column; gap: 4px; }
+  .cover-meta-label {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--text-subtle);
+  }
+  .cover-meta-value { font-size: 14px; color: var(--text); font-weight: 500; }
+
+  .cover-bottom {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    color: var(--text-subtle); font-size: 11px; letter-spacing: 0.04em;
+  }
+
+  /* PAGE 2 — DIAGNOSTIC */
+  .section-header { margin-bottom: 24px; }
+  .section-header .brand { margin-bottom: 14px; }
+  .section-header h2 {
+    font-size: 32px; line-height: 1.1; font-weight: 600;
+    letter-spacing: -0.025em; margin: 0 0 12px; color: var(--text);
+  }
+  .section-header .lede {
+    font-size: 15px; color: var(--text-muted); max-width: 5.2in; line-height: 1.55;
+  }
+
+  .stat-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px;
+  }
+  .stat-card {
+    background: var(--bg-elev); border: 1px solid var(--line);
+    border-radius: 14px; padding: 22px 24px; position: relative; overflow: hidden;
+  }
+  .stat-card.featured {
+    background: linear-gradient(135deg, rgba({{ accent_rgb }},0.06), rgba({{ accent_rgb }},0.02));
+    border-color: rgba({{ accent_rgb }},0.22);
+  }
+  .stat-card .accent-line { width: 18px; height: 1px; background: var(--accent); margin-bottom: 14px; }
+
+  .stat-number {
+    font-size: 56px; font-weight: 600; letter-spacing: -0.04em;
+    line-height: 1; color: var(--text); margin-bottom: 8px;
+  }
+  .stat-card.featured .stat-number { color: var(--accent); }
+  .stat-label {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--text-subtle); margin-bottom: 8px;
+  }
+  .stat-explain { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+
+  .quote-block {
+    margin-top: 22px; padding: 16px 22px;
+    background: rgba({{ accent_rgb }},0.06);
+    border-left: 2px solid var(--accent);
+    border-radius: 0 10px 10px 0;
+    font-size: 14px; color: var(--text-muted); font-style: italic;
+  }
+  .quote-block strong { color: var(--text); font-weight: 600; }
+
+  /* PAGE 3 — NOTRE LECTURE */
+  .lecture-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 5px 12px;
+    background: var(--accent-soft); border: 1px solid var(--accent-soft-strong);
+    color: var(--accent); border-radius: 999px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.1em;
+    text-transform: uppercase; margin-bottom: 18px;
+  }
+  .lecture-promesse {
+    background: linear-gradient(135deg, rgba({{ accent_rgb }},0.08), rgba({{ accent_rgb }},0.02));
+    border: 1px solid rgba({{ accent_rgb }},0.25);
+    border-radius: 14px; padding: 24px 26px; margin-bottom: 28px;
+  }
+  .lecture-promesse-eyebrow {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--accent); margin-bottom: 8px;
+  }
+  .lecture-promesse-text {
+    font-size: 19px; line-height: 1.4; color: var(--text);
+    font-weight: 500; letter-spacing: -0.015em;
+  }
+
+  .lecture-pillars {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 24px;
+  }
+  .pillar {
+    background: var(--bg-elev); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px 18px;
+  }
+  .pillar-num {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.18em;
+    color: var(--accent); margin-bottom: 10px;
+  }
+  .pillar-title {
+    font-size: 14px; font-weight: 600; color: var(--text);
+    margin-bottom: 6px; letter-spacing: -0.005em;
+  }
+  .pillar-desc { font-size: 12.5px; color: var(--text-muted); line-height: 1.5; }
+
+  /* PAGES 4-5 — PLANS A/B */
+  .plan-tag {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.16em;
+    text-transform: uppercase; margin-bottom: 14px;
+  }
+  .plan-tag.recommended { color: var(--accent); }
+  .plan-tag.recommended::before { content: "★"; font-size: 14px; }
+  .plan-tag.alternative { color: var(--text-muted); }
+
+  .plan-title {
+    font-size: 32px; font-weight: 600; letter-spacing: -0.025em;
+    line-height: 1.1; color: var(--text); margin-bottom: 8px;
+  }
+  .plan-subtitle { font-size: 14px; color: var(--text-muted); margin-bottom: 18px; max-width: 5in; }
+
+  .timeline { position: relative; padding-left: 0; }
+  .vague {
+    background: var(--bg-elev); border: 1px solid var(--line);
+    border-radius: 12px; padding: 14px 18px; margin-bottom: 8px;
+    display: grid; grid-template-columns: 120px 1fr; gap: 16px; position: relative;
+  }
+  .vague.first {
+    border-color: rgba({{ accent_rgb }},0.3);
+    background: linear-gradient(135deg, rgba({{ accent_rgb }},0.05), rgba({{ accent_rgb }},0.01));
+  }
+  .vague-period { border-right: 1px solid var(--line); padding-right: 16px; }
+  .vague-period .label {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--accent); margin-bottom: 6px;
+  }
+  .vague-period .duration {
+    font-size: 16px; font-weight: 600; color: var(--text);
+    letter-spacing: -0.01em; line-height: 1.2; margin-bottom: 3px;
+  }
+  .vague-period .when { font-size: 11px; color: var(--text-subtle); font-weight: 500; }
+
+  .vague-content { padding-top: 1px; }
+  .vague-headline {
+    font-size: 13.5px; font-weight: 600; color: var(--text);
+    margin-bottom: 7px; letter-spacing: -0.005em;
+  }
+  .vague-actions { list-style: none; }
+  .vague-actions li {
+    font-size: 12px; color: var(--text-muted); line-height: 1.5;
+    padding-left: 14px; position: relative; margin-bottom: 3px;
+  }
+  .vague-actions li::before {
+    content: ""; position: absolute; left: 0; top: 8px;
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--accent); opacity: 0.8;
+  }
+
+  .metric-line {
+    margin-top: 12px; padding: 11px 16px;
+    background: rgba(255,255,255,0.03); border: 1px solid var(--line);
+    border-radius: 10px; font-size: 12px; color: var(--text-muted);
+  }
+  .metric-line strong { color: var(--text); font-weight: 600; }
+  .metric-line .label {
+    color: var(--accent); font-weight: 600; font-size: 10px;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    display: block; margin-bottom: 4px;
+  }
+
+  /* PAGE 6 — ONBOARDING + CTA */
+  .onboarding-hero {
+    text-align: center; padding: 10px 0; margin-bottom: 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .onboarding-amount {
+    font-size: 48px; font-weight: 600; letter-spacing: -0.04em;
+    line-height: 1; color: var(--accent); margin-bottom: 4px;
+  }
+  .onboarding-label { font-size: 13px; color: var(--text-muted); font-weight: 500; }
+
+  .onboarding-includes {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;
+  }
+  .onboarding-item {
+    background: var(--bg-elev); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 12px;
+  }
+  .onboarding-item-icon {
+    width: 20px; height: 20px;
+    background: var(--accent-soft); color: var(--accent);
+    border-radius: 5px; display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; margin-bottom: 6px;
+  }
+  .onboarding-item-title {
+    font-size: 12.5px; font-weight: 600; color: var(--text); margin-bottom: 3px;
+  }
+  .onboarding-item-desc { font-size: 11.5px; color: var(--text-muted); line-height: 1.45; }
+
+  .cta-block {
+    background: linear-gradient(135deg, rgba({{ accent_rgb }},0.08), rgba({{ accent_rgb }},0.02));
+    border: 1px solid rgba({{ accent_rgb }},0.25);
+    border-radius: 14px; padding: 14px 20px; text-align: center;
+  }
+  .cta-block h3 {
+    font-size: 17px; font-weight: 600; color: var(--text);
+    margin-bottom: 4px; letter-spacing: -0.018em;
+  }
+  .cta-block p { font-size: 13px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.5; }
+  .cta-button {
+    display: inline-block; background: var(--accent); color: var(--bg);
+    padding: 14px 28px; border-radius: 10px; font-size: 15px;
+    font-weight: 600; letter-spacing: -0.005em; text-decoration: none;
+  }
+  .cta-meta { margin-top: 14px; font-size: 12px; color: var(--text-subtle); }
+
+  .signature {
+    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line);
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 10.5px; color: var(--text-subtle);
+  }
+  .signature-name { color: var(--text); font-weight: 600; }
+
+  @media print {
+    html, body { background: var(--bg); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .page { box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- PAGE 1 — COUVERTURE -->
+<div class="page cover">
+  <div class="cover-top">
+    <p class="brand"><span class="brand-dot"></span> Welldone Studio · Plan de match</p>
+  </div>
+  <div class="cover-mid">
+    <p class="cover-eyebrow">Pour {{ client_entreprise }} — {{ client_nom }}</p>
+    <h1>{{ punchline | replace('**', '<strong>', 1) | replace('**', '</strong>', 1) | safe }}</h1>
+    <p class="cover-tagline">{{ tagline }}</p>
+    <div class="cover-meta">
+      <div class="cover-meta-row">
+        <span class="cover-meta-label">Préparé pour</span>
+        <span class="cover-meta-value">{{ client_nom }} · {{ client_entreprise }}</span>
+      </div>
+      <div class="cover-meta-row">
+        <span class="cover-meta-label">Date</span>
+        <span class="cover-meta-value">{{ date_brief }}</span>
+      </div>
+      <div class="cover-meta-row">
+        <span class="cover-meta-label">Préparé par</span>
+        <span class="cover-meta-value">Welldone Studio</span>
+      </div>
+      <div class="cover-meta-row">
+        <span class="cover-meta-label">Durée du plan</span>
+        <span class="cover-meta-value">90 jours · ajustable 6 à 12 mois</span>
+      </div>
+    </div>
+  </div>
+  <div class="cover-bottom">
+    <span>welldonestudio · Montréal</span>
+    <span>Document de discussion — pas une facture</span>
+  </div>
+</div>
+
+<!-- PAGE 2 — DIAGNOSTIC -->
+<div class="page">
+  <div class="section-header">
+    <p class="brand"><span class="brand-dot"></span> 02 · Diagnostic</p>
+    <h2>Ce que les données disent.</h2>
+    <p class="lede">Aucune généralité. Chaque chiffre vient d'un crawl direct de votre site, d'une recherche concurrentielle locale et d'un test de votre empreinte numérique publique.</p>
+  </div>
+  {% set first_two = stats[:2] %}
+  {% set last_two = stats[2:4] %}
+  {% if first_two %}
+  <div class="stat-grid">
+    {% for stat in first_two %}
+    <div class="stat-card{% if stat.featured %} featured{% endif %}">
+      <div class="accent-line"></div>
+      <div class="stat-number">{{ stat.value | safe }}</div>
+      <div class="stat-label">{{ stat.label }}</div>
+      <p class="stat-explain">{{ stat.explain | safe }}</p>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if last_two %}
+  <div class="stat-grid">
+    {% for stat in last_two %}
+    <div class="stat-card{% if stat.featured %} featured{% endif %}">
+      <div class="accent-line"></div>
+      <div class="stat-number">{{ stat.value | safe }}</div>
+      <div class="stat-label">{{ stat.label }}</div>
+      <p class="stat-explain">{{ stat.explain | safe }}</p>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <span class="page-num">02 · 06</span>
+</div>
+
+<!-- PAGE 3 — NOTRE LECTURE -->
+<div class="page">
+  <div class="section-header">
+    <p class="brand"><span class="brand-dot"></span> 03 · Notre lecture</p>
+    <h2>Voici ce qu'on observe et comment on l'attaque.</h2>
+  </div>
+  <span class="lecture-pill">★ Stratégie recommandée</span>
+  <div class="lecture-promesse">
+    <div class="lecture-promesse-eyebrow">Promesse mesurable</div>
+    <div class="lecture-promesse-text">{{ promesse | safe }}</div>
+  </div>
+  <div class="lecture-pillars">
+    {% for p in piliers[:3] %}
+    <div class="pillar">
+      <div class="pillar-num">{{ p.num }}</div>
+      <div class="pillar-title">{{ p.title }}</div>
+      <div class="pillar-desc">{{ p.desc | safe }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  <span class="page-num">03 · 06</span>
+</div>
+
+<!-- PAGE 4 — PLAN A -->
+<div class="page">
+  <div class="section-header">
+    <p class="brand"><span class="brand-dot"></span> 04 · Plan A</p>
+    <span class="plan-tag recommended">Recommandé</span>
+    <h2 class="plan-title">{{ plan_a.name }}</h2>
+    <p class="plan-subtitle">{{ plan_a.subtitle }}</p>
+  </div>
+  <div class="timeline">
+    {% for v in plan_a.vagues %}
+    <div class="vague{% if loop.first %} first{% endif %}">
+      <div class="vague-period">
+        <div class="label">{{ v.label }}</div>
+        <div class="duration">{{ v.duration }}</div>
+        <div class="when">{{ v.when }}</div>
+      </div>
+      <div class="vague-content">
+        <div class="vague-headline">{{ v.headline }}</div>
+        <ul class="vague-actions">
+          {% for a in v.actions %}<li>{{ a | safe }}</li>{% endfor %}
+        </ul>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="metric-line">
+    <span class="label">Métrique de succès — mesurable</span>
+    {{ plan_a.metric | safe }}
+  </div>
+  <span class="page-num">04 · 06</span>
+</div>
+
+<!-- PAGE 5 — PLAN B -->
+<div class="page">
+  <div class="section-header">
+    <p class="brand"><span class="brand-dot"></span> 05 · Plan B</p>
+    <span class="plan-tag alternative">Alternative</span>
+    <h2 class="plan-title">{{ plan_b.name }}</h2>
+    <p class="plan-subtitle">{{ plan_b.subtitle }}</p>
+  </div>
+  <div class="timeline">
+    {% for v in plan_b.vagues %}
+    <div class="vague{% if loop.first %} first{% endif %}">
+      <div class="vague-period">
+        <div class="label">{{ v.label }}</div>
+        <div class="duration">{{ v.duration }}</div>
+        <div class="when">{{ v.when }}</div>
+      </div>
+      <div class="vague-content">
+        <div class="vague-headline">{{ v.headline }}</div>
+        <ul class="vague-actions">
+          {% for a in v.actions %}<li>{{ a | safe }}</li>{% endfor %}
+        </ul>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="metric-line">
+    <span class="label">Métrique de succès — mesurable</span>
+    {{ plan_b.metric | safe }}
+  </div>
+  <span class="page-num">05 · 06</span>
+</div>
+
+<!-- PAGE 6 — ONBOARDING + CTA -->
+<div class="page">
+  <div class="section-header" style="margin-bottom: 18px;">
+    <p class="brand"><span class="brand-dot"></span> 06 · Démarrer</p>
+    <h2 style="font-size: 26px; margin-bottom: 8px;">Un point de départ, deux trajectoires.</h2>
+    <p class="lede" style="font-size: 13.5px;">Quel que soit le plan choisi, on commence ensemble par l'onboarding. Le mensuel à partir du mois 1 dépend des priorités cochées en RDV.</p>
+  </div>
+  <div class="onboarding-hero">
+    <div class="onboarding-amount">{{ onboarding_amount }}</div>
+    <div class="onboarding-label">Onboarding · paiement unique · démarrage immédiat</div>
+  </div>
+  <div class="onboarding-includes">
+    {% for it in onboarding_items[:4] %}
+    <div class="onboarding-item">
+      <div class="onboarding-item-icon">{{ it.icon }}</div>
+      <div class="onboarding-item-title">{{ it.title }}</div>
+      <div class="onboarding-item-desc">{{ it.desc | safe }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="cta-block">
+    <h3>30 minutes pour cocher les priorités.</h3>
+    <p>On ne décide pas de tout d'avance. En RDV, on regarde ensemble le Plan A et le Plan B, et tu choisis vague par vague ce qui démarre maintenant.</p>
+    <a href="https://app.cal.com/welldone-studio-calendrier" class="cta-button">Réserver le RDV de cadrage</a>
+    <div class="cta-meta">app.cal.com/welldone-studio-calendrier · ou en réponse à ce courriel</div>
+  </div>
+  <div style="margin-top: 12px; padding: 14px 18px; background: rgba({{ accent_rgb }}, 0.05); border: 1px solid rgba({{ accent_rgb }}, 0.22); border-left: 3px solid var(--accent); border-radius: 10px;">
+    <div style="font-size: 9.5px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px;">Notre engagement écrit</div>
+    <div style="font-size: 12.5px; color: var(--text); line-height: 1.55;">{{ engagement | safe }}</div>
+  </div>
+  <div class="signature">
+    <div>
+      <div class="signature-name">Welldone Studio</div>
+      <div>welldonestudio · Montréal · awelldone.studio</div>
+    </div>
+    <div style="text-align:right;">
+      <div>Préparé pour {{ client_nom }}</div>
+      <div>{{ date_brief }}</div>
+    </div>
+  </div>
+  <span class="page-num">06 · 06</span>
+</div>
+
+</body>
+</html>
