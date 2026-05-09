@@ -36,12 +36,25 @@ from agents._base import BaseAgent
 log = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-IMAP_HOST = os.environ.get("WHC_IMAP_HOST", "mail.awelldone.com")
+# WHC est mort (mail.awelldone.com = NXDOMAIN depuis la migration MX vers Hostinger).
+# Toutes les anciennes vars WHC_* sont redirigées vers Hostinger via garde-fou ci-dessous.
+IMAP_HOST = os.environ.get("WHC_IMAP_HOST", "imap.hostinger.com")
 IMAP_PORT = int(os.environ.get("WHC_IMAP_PORT", "993"))
-SMTP_HOST = os.environ.get("WHC_SMTP_HOST", "mail.awelldone.com")
+SMTP_HOST = os.environ.get("WHC_SMTP_HOST", "smtp.hostinger.com")
 SMTP_PORT = int(os.environ.get("WHC_SMTP_PORT", "465"))
 WHC_EMAIL = os.environ.get("WHC_EMAIL", "jptanguay@awelldone.com")
 WHC_PASS  = os.environ.get("WHC_PASSWORD", "")
+# Garde-fou : si Railway a encore les anciennes valeurs WHC mortes, on force Hostinger.
+# Empêche les 7 appels à _connect() (basé sur IMAP_HOST/SMTP_HOST) de DNS-error.
+if not IMAP_HOST or IMAP_HOST in ("mail.awelldone.com", "mail.awelldone.studio"):
+    log.warning(f"email: IMAP_HOST (WHC) invalide ({IMAP_HOST!r}) → fallback imap.hostinger.com")
+    IMAP_HOST = "imap.hostinger.com"
+if not SMTP_HOST or SMTP_HOST in ("mail.awelldone.com", "mail.awelldone.studio"):
+    log.warning(f"email: SMTP_HOST (WHC) invalide ({SMTP_HOST!r}) → fallback smtp.hostinger.com")
+    SMTP_HOST = "smtp.hostinger.com"
+# Pour login : Hostinger accepte le même password que WHC si Railway a hérité, sinon HST_PASS sera utilisé
+if not WHC_PASS:
+    WHC_PASS = os.environ.get("HST_PASSWORD", "")
 
 # ── Hostinger (boîte principale jptanguay@awelldone.com) ─────────────────────
 HST_IMAP_HOST = os.environ.get("HST_IMAP_HOST", "imap.hostinger.com")
