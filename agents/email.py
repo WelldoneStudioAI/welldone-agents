@@ -612,6 +612,16 @@ def _gpt_draft(to: str, instructions: str) -> str:
 
 _ARCHIVES_FOLDER = "INBOX.Archives"
 
+
+def _ensure_folder(M, folder: str) -> None:
+    """Crée le dossier IMAP s'il n'existe pas (idempotent : 'NO' si déjà présent).
+    Sans lui, chaque MOVE d'archivage échoue en silence → l'INBOX ne se vide jamais
+    (bug constaté : INBOX.Archives absent → 67k courriels jamais triés)."""
+    try:
+        M.create(folder)
+    except Exception as e:
+        log.warning(f"email: _ensure_folder({folder}): {e}")
+
 # Mots français courants pour détecter les emails en français direct
 _FR_WORDS = {"bonjour","bonsoir","salut","merci","svp","s'il","voici","votre","votre","nous","vous",
              "est","sont","pour","avec","dans","mais","qui","que","une","les","des","plus","bien",
@@ -1653,6 +1663,7 @@ class EmailAgent(BaseAgent):
                     _save_processed_uids(processed_uids)
 
                     if to_archive:
+                        _ensure_folder(M, _ARCHIVES_FOLDER)   # crée INBOX.Archives au besoin
                         for i in range(0, len(to_archive), 500):
                             batch = to_archive[i:i + 500]
                             try:
@@ -1769,7 +1780,11 @@ class EmailAgent(BaseAgent):
                     continue
                 try:
                     M.select("INBOX", readonly=True)
-                    typ, data = M.uid("search", None, "ALL")
+                    # Borné aux 14 derniers jours : sinon on scanne TOUTE l'INBOX
+                    # (jusqu'à 67k courriels / 2 ans) à chaque passage horaire → on
+                    # « broie » les vieux. Une relance ne vise que le courriel récent.
+                    _since = (datetime.now() - timedelta(days=14)).strftime("%d-%b-%Y")
+                    typ, data = M.uid("search", None, f"SINCE {_since}")
                     all_uids = data[0].split() if data[0] else []
 
                     for uid_b in all_uids:
