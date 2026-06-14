@@ -30,6 +30,11 @@ import urllib.request
 from datetime import datetime
 
 from agents._base import BaseAgent
+from config import (
+    NOTION_TOKEN, NOTION_HEALTHCHECK_DB,
+    WHC_IMAP_HOST, WHC_IMAP_PORT, WHC_EMAIL, WHC_PASSWORD,
+    HST_IMAP_HOST, HST_IMAP_PORT, HST_EMAIL, HST_PASSWORD,
+)
 
 log = logging.getLogger(__name__)
 
@@ -82,12 +87,16 @@ class WatchdogAgent(BaseAgent):
             icon = "✅" if ok else "❌"
             lines.append(f"{icon} {name}" + (f" — {detail}" if not ok else ""))
 
-        import subprocess
-        try:
-            commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"],
-                                             stderr=subprocess.DEVNULL).decode().strip()
-        except Exception:
-            commit = "inconnu"
+        # Railway injecte le SHA du déploiement (le conteneur n'a pas de .git → le
+        # `git rev-parse` retournait toujours « inconnu »). On lit l'env d'abord.
+        commit = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")[:7]
+        if not commit:
+            import subprocess
+            try:
+                commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"],
+                                                 stderr=subprocess.DEVNULL).decode().strip()
+            except Exception:
+                commit = "inconnu"
         lines.append(f"\n_{ok_count}/{len(results)} services opérationnels — commit `{commit}`_")
 
         summary = "\n".join(lines)
@@ -106,20 +115,18 @@ class WatchdogAgent(BaseAgent):
 
     async def _check_imap_whc(self) -> tuple[str, bool, str]:
         name = "IMAP WHC"
-        host = os.environ.get("WHC_IMAP_HOST", "mail.awelldone.com")
-        port = int(os.environ.get("WHC_IMAP_PORT", "993"))
-        user = os.environ.get("WHC_EMAIL", "")
-        pwd  = os.environ.get("WHC_PASSWORD", "")
+        # WHC est mort : la boîte vit désormais sur Hostinger. config résout le host
+        # (garde-fou DNS) → plus jamais de « Errno 8 » sur mail.awelldone.com.
+        host, port = WHC_IMAP_HOST, WHC_IMAP_PORT
+        user, pwd  = WHC_EMAIL, WHC_PASSWORD
         return await asyncio.get_running_loop().run_in_executor(
             None, lambda: self._test_imap(name, host, port, user, pwd)
         )
 
     async def _check_imap_hostinger(self) -> tuple[str, bool, str]:
         name = "IMAP Hostinger"
-        host = os.environ.get("HST_IMAP_HOST", "imap.hostinger.com")
-        port = int(os.environ.get("HST_IMAP_PORT", "993"))
-        user = os.environ.get("HST_EMAIL", "")
-        pwd  = os.environ.get("HST_PASSWORD", "")
+        host, port = HST_IMAP_HOST, HST_IMAP_PORT
+        user, pwd  = HST_EMAIL, HST_PASSWORD
         if not pwd:
             return (name, False, "HST_PASSWORD manquant dans env")
         return await asyncio.get_running_loop().run_in_executor(
@@ -214,21 +221,24 @@ class WatchdogAgent(BaseAgent):
         name = "Notion"
         def _test():
             try:
-                token = os.environ.get("NOTION_API_KEY", "") or os.environ.get("NOTION_TOKEN", "")
+                # Source de vérité : config (mêmes valeurs que les agents réels).
+                token = NOTION_TOKEN
                 if not token:
-                    return (name, False, "NOTION_API_KEY manquant")
-                db_id = os.environ.get("NOTION_SOURCES_DB", "")
-                if not db_id:
-                    return (name, False, "NOTION_SOURCES_DB manquant")
+                    return (name, False, "NOTION_TOKEN manquant")
+                headers = {"Authorization": f"Bearer {token}",
+                           "Notion-Version": "2022-06-28"}
+                # 1) Validité du token, indépendamment d'une DB précise.
                 req = urllib.request.Request(
-                    f"https://api.notion.com/v1/databases/{db_id}",
-                    headers={
-                        "Authorization": f"Bearer {token}",
-                        "Notion-Version": "2022-06-28",
-                    },
-                )
-                resp = urllib.request.urlopen(req, timeout=10)
-                data = json.loads(resp.read())
+                    "https://api.notion.com/v1/users/me", headers=headers)
+                urllib.request.urlopen(req, timeout=10).read()
+                # 2) Lecture d'une DB VIVANTE réellement utilisée (Pipeline Agents IA).
+                #    NOTION_SOURCES_DB est mort (404) → JAMAIS sondé ici : c'était la
+                #    cause de la fausse alerte « Notion en panne ».
+                db_id = NOTION_HEALTHCHECK_DB
+                if db_id:
+                    req2 = urllib.request.Request(
+                        f"https://api.notion.com/v1/databases/{db_id}", headers=headers)
+                    urllib.request.urlopen(req2, timeout=10).read()
                 return (name, True, "")
             except Exception as e:
                 return (name, False, str(e)[:100])

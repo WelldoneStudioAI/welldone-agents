@@ -40,8 +40,14 @@ GOOGLE_OAUTH_SCOPES = [
 # Supporte NOTION_TOKEN (legacy) et NOTION_API_KEY (Railway actuel)
 NOTION_TOKEN       = os.environ.get("NOTION_TOKEN", "") or os.environ.get("NOTION_API_KEY", "")
 NOTION_TASK_DB     = os.environ.get("NOTION_TASK_DB", "bd4cff932b7842b19f7cb748e1abda48")
+# ⚠️ NOTION_SOURCES_DB est MORT : l'API renvoie 404 (base supprimée). L'agent veille
+# l'interroge encore — à recréer / repointer (fournir un ID valide via env). NE PAS
+# s'en servir comme sonde de santé : ça génère une fausse alerte « Notion en panne ».
 NOTION_SOURCES_DB  = os.environ.get("NOTION_SOURCES_DB", "10e87f01b8ec4c60a6383d48c7aac4a2")
 NOTION_PIPELINE_DB = os.environ.get("NOTION_PIPELINE_DB", "51b9980b703b46af87d994167ba978f5")
+# DB sondée par le watchdog : doit être VIVANTE. Le Pipeline Agents IA est écrit par
+# reviseur/analytics/blog/framer → vrai signal « Notion utilisable par les agents ».
+NOTION_HEALTHCHECK_DB = os.environ.get("NOTION_HEALTHCHECK_DB", "") or NOTION_PIPELINE_DB
 
 # ── QuickBooks Online ─────────────────────────────────────────────────────────
 QBO_CLIENT_ID      = os.environ.get("QBO_CLIENT_ID", "")
@@ -107,13 +113,31 @@ CLOUDINARY_API_SECRET  = os.environ.get("CLOUDINARY_API_SECRET", "")
 # ── Google Cloud Storage (images blog Gemini → CDN public) ────────────────────
 GCS_BUCKET = os.environ.get("GCS_BUCKET", "welldone-blog-images")
 
-# ── WHC Email (IMAP/SMTP — awelldone.com) ────────────────────────────────────
-WHC_IMAP_HOST = os.environ.get("WHC_IMAP_HOST", "mail.awelldone.com")
+# ── Email (Hostinger — boîte principale jptanguay@awelldone.com) ─────────────
+# ⚠️ WHC est MORT : mail.awelldone.com = NXDOMAIN depuis la migration MX → Hostinger.
+# Tous les défauts pointent désormais vers Hostinger. Un garde-fou neutralise toute
+# valeur WHC morte encore présente dans Railway (source du « Errno 8 nodename… »).
+_DEAD_MAIL_HOSTS = {"", "mail.awelldone.com", "mail.awelldone.studio"}
+
+WHC_IMAP_HOST = os.environ.get("WHC_IMAP_HOST", "imap.hostinger.com")
 WHC_IMAP_PORT = int(os.environ.get("WHC_IMAP_PORT", "993"))
-WHC_SMTP_HOST = os.environ.get("WHC_SMTP_HOST", "mail.awelldone.com")
+WHC_SMTP_HOST = os.environ.get("WHC_SMTP_HOST", "smtp.hostinger.com")
 WHC_SMTP_PORT = int(os.environ.get("WHC_SMTP_PORT", "465"))
 WHC_EMAIL     = os.environ.get("WHC_EMAIL",    "jptanguay@awelldone.com")
 WHC_PASSWORD  = os.environ.get("WHC_PASSWORD", "")
+
+# Hostinger — vars dédiées (utilisées par l'agent email ET le watchdog)
+HST_IMAP_HOST = os.environ.get("HST_IMAP_HOST", "imap.hostinger.com")
+HST_IMAP_PORT = int(os.environ.get("HST_IMAP_PORT", "993"))
+HST_EMAIL     = os.environ.get("HST_EMAIL",     "jptanguay@awelldone.com")
+HST_PASSWORD  = os.environ.get("HST_PASSWORD",  "") or WHC_PASSWORD
+
+# Garde-fou DNS : si Railway a hérité d'un host WHC mort, on force Hostinger.
+if WHC_IMAP_HOST in _DEAD_MAIL_HOSTS: WHC_IMAP_HOST = "imap.hostinger.com"
+if WHC_SMTP_HOST in _DEAD_MAIL_HOSTS: WHC_SMTP_HOST = "smtp.hostinger.com"
+if HST_IMAP_HOST in _DEAD_MAIL_HOSTS: HST_IMAP_HOST = "imap.hostinger.com"
+# Même serveur Hostinger désormais : WHC hérite du mot de passe HST s'il est vide.
+if not WHC_PASSWORD: WHC_PASSWORD = HST_PASSWORD
 
 # ── Timezone ──────────────────────────────────────────────────────────────────
 TIMEZONE = "America/Toronto"
