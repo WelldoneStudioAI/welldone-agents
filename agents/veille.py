@@ -149,7 +149,7 @@ Voici les derniers articles des sources de référence (marketing, SEO, IA) :
 
 ---
 
-Génère exactement 10 idées d'articles de blog pour awelldone.com/journal.
+Génère exactement 10 idées d'articles de blog pour awelldone.studio/journal.
 
 Pour chaque idée :
 1. **Titre accrocheur** (adapté au marché québécois, en français)

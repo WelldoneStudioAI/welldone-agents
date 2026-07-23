@@ -86,7 +86,7 @@ Agents disponibles et leurs responsabilités :
   → Si collection non précisée → affiche un clavier de sélection (ne pas deviner la collection)
   → Utilise quand JP dit "révise cet article", "améliore cette page", "recommandations de contenu", "audit de page"
 - layout_guardian: {inspecter, juge, rapport} → Framer Layout Guardian — détecte les problèmes de mise en page (overflow, responsive, alignement) et propose des corrections minimales sans redesign. Utilise quand JP dit "inspecte ma page", "problème layout", "responsive cassé", "vérifie le design", "audit UI"
-- email: {trier, lire, chercher, résumer, rédiger, envoyer, filtres, créer_filtre, appliquer_filtres, dossiers} → boîte WHC jptanguay@awelldone.com
+- email: {trier, lire, chercher, résumer, rédiger, envoyer, filtres, créer_filtre, appliquer_filtres, dossiers} → boîte d'archives Hostinger jptanguay@awelldone.com (historique seulement — le domaine awelldone.com est perdu, plus aucun courriel entrant)
 - site: {crawl, page, rapport} → crawler awelldone.studio et welldone.archi → Markdown Obsidian
   → "crawl" = crawl complet du site principal
   → "crawl archi" = crawl complet de welldone.archi
@@ -96,7 +96,7 @@ Agents disponibles et leurs responsabilités :
 - chat: {respond} → conversation générale, rédaction, brainstorm
 
 IMPORTANT — agent "email" vs "gmail":
-  → "email" = boîte professionnelle WHC (jptanguay@awelldone.com, awelldone.com)
+  → "email" = archives Hostinger (jptanguay@awelldone.com — domaine perdu, lecture de l'historique seulement)
   → "gmail" = boîte Google (awelldonestudio@gmail.com)
   → Par défaut, si JP dit "mes emails" ou "ma boîte", utilise "email" (WHC = boîte principale)
 

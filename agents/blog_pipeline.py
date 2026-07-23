@@ -404,7 +404,7 @@ class BlogPipelineAgent(BaseAgent):
 
         msg = "\n".join(lines)
 
-        # Bouton inline "Publier sur awelldone.com" si on a le slug
+        # Bouton inline "Publier sur awelldone.studio" si on a le slug
         keyboard = None
         if slug:
             try:

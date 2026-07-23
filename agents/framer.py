@@ -1325,7 +1325,7 @@ class FramerAgent(BaseAgent):
 
     async def publier(self, context: dict | None = None) -> str:
         """
-        Publie le site Framer sur awelldone.com (production).
+        Publie le site Framer sur awelldone.studio (production).
 
         context: { slug: str — optionnel, pour construire l'URL de l'article }
         """

@@ -248,7 +248,7 @@ def reformat_file(path: Path) -> bool:
 
     # ── Construire le lien URL cliquable ──────────────────────────────────────
     if url:
-        domain = "welldone.archi" if site == "archi" else "awelldone.com"
+        domain = "welldone.archi" if site == "archi" else "awelldone.studio"
         url_link = f"[→ Voir sur {domain}]({url})"
     else:
         url_link = ""

@@ -114,13 +114,13 @@ def get_gsc_keywords():
     start = (datetime.today() - timedelta(days=28)).strftime("%Y-%m-%d")
 
     keywords = service.searchanalytics().query(
-        siteUrl="https://www.awelldone.com/",
+        siteUrl="https://awelldone.studio/",
         body={"startDate": start, "endDate": end, "dimensions": ["query"],
               "rowLimit": 10, "orderBy": [{"fieldName": "impressions", "sortOrder": "DESCENDING"}]}
     ).execute().get("rows", [])
 
     opps = service.searchanalytics().query(
-        siteUrl="https://www.awelldone.com/",
+        siteUrl="https://awelldone.studio/",
         body={"startDate": start, "endDate": end, "dimensions": ["query"],
               "rowLimit": 200, "orderBy": [{"fieldName": "impressions", "sortOrder": "DESCENDING"}]}
     ).execute().get("rows", [])
@@ -184,7 +184,7 @@ def analyse_consultant(totals, organic, direct, opps):
         lignes.append("→ Aucune opportunité SEO immédiate détectée cette semaine.")
 
     # Santé technique
-    lignes.append("🔧 <strong>Santé technique :</strong> GTM actif sur awelldone.com · GA4 opérationnel · Tracking clics & scroll configuré.")
+    lignes.append("🔧 <strong>Santé technique :</strong> GTM actif sur awelldone.studio · GA4 opérationnel · Tracking clics & scroll configuré.")
 
     return lignes
 
@@ -293,13 +293,13 @@ def construire_html(totals, sources_rows, pages_rows, keywords, opps, analyse, s
     <p style="margin:4px 0;font-size:13px;color:#4ade80">✅ Google Analytics actif — données reçues</p>
     <p style="margin:4px 0;font-size:13px;color:#4ade80">✅ GTM opérationnel — tracking clics & scroll actif</p>
     <p style="margin:4px 0;font-size:13px;color:#4ade80">✅ Search Console connectée</p>
-    <p style="margin:4px 0;font-size:13px;color:#60a5fa">→ awelldone.studio → awelldone.com (redirection 301 active)</p>
+    <p style="margin:4px 0;font-size:13px;color:#60a5fa">→ awelldone.studio servi par Framer (apex + www)</p>
   </div>
 
   <!-- Footer -->
   <div style="border-top:1px solid #1a1a1a;margin-top:32px;padding-top:16px;text-align:center">
     <p style="margin:0;color:#444;font-size:11px">Welldone Studio AI System · Rapport automatique chaque lundi 8h</p>
-    <p style="margin:4px 0 0;color:#333;font-size:11px">awelldone.com · awelldone.studio · welldone.archi</p>
+    <p style="margin:4px 0 0;color:#333;font-size:11px">awelldone.studio · welldone.archi</p>
   </div>
 
 </div>

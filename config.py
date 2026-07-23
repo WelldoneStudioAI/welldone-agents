@@ -113,7 +113,13 @@ CLOUDINARY_API_SECRET  = os.environ.get("CLOUDINARY_API_SECRET", "")
 # ── Google Cloud Storage (images blog Gemini → CDN public) ────────────────────
 GCS_BUCKET = os.environ.get("GCS_BUCKET", "welldone-blog-images")
 
-# ── Email (Hostinger — boîte principale jptanguay@awelldone.com) ─────────────
+# ── Email (Hostinger — boîte d'archives jptanguay@awelldone.com) ─────────────
+# ⚠️ NE PAS remplacer WHC_EMAIL / HST_EMAIL par une adresse @awelldone.studio.
+# Le domaine awelldone.com a été dropcatché par un tiers le 2026-07-21 (plus aucun
+# courriel entrant), MAIS la boîte reste un compte Hostinger réel : ces valeurs sont
+# des IDENTIFIANTS DE CONNEXION IMAP/SMTP, pas des adresses de destination. Les
+# changer casse l'authentification et coupe l'accès à ~67 000 courriels d'archives.
+# awelldone.studio n'a pas de boîte Hostinger (Cloudflare Email Routing = redirection).
 # ⚠️ WHC est MORT : mail.awelldone.com = NXDOMAIN depuis la migration MX → Hostinger.
 # Tous les défauts pointent désormais vers Hostinger. Un garde-fou neutralise toute
 # valeur WHC morte encore présente dans Railway (source du « Errno 8 nodename… »).

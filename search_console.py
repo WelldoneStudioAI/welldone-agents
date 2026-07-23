@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Google Search Console — Welldone Studio
-Sites: awelldone.com (studio) / welldone.archi (archi)
+Sites: awelldone.studio (studio) / welldone.archi (archi)
 """
 
 import os
@@ -16,7 +16,7 @@ CREDENTIALS_FILE = os.path.expanduser("~/.config/gws/client_secret.json")
 TOKEN_FILE = os.path.expanduser("~/.config/gws/searchconsole_token.json")
 
 SITES = {
-    "studio": "sc-domain:awelldone.com",
+    "studio": "sc-domain:awelldone.studio",
     "archi": "sc-domain:welldone.archi",
 }
 

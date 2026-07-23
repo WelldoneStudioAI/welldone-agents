@@ -582,7 +582,7 @@ async def _handle_callback_inner(update, context, query, user_id, data):
             except Exception:
                 await query.edit_message_text(result)
 
-    # ── Publier article sur awelldone.com ─────────────────────────────────────
+    # ── Publier article sur awelldone.studio ─────────────────────────────────────
     elif data.startswith("pub_"):
         key = data[4:]  # "pub_{key}" → key
         from agents.blog_pipeline import _pub_registry
@@ -593,7 +593,7 @@ async def _handle_callback_inner(update, context, query, user_id, data):
                 parse_mode="Markdown",
             )
             return
-        await query.edit_message_text("⏳ Publication sur awelldone.com en cours…")
+        await query.edit_message_text("⏳ Publication sur awelldone.studio en cours…")
         result = await dispatch("framer", "publier", {"slug": slug})
         try:
             await query.edit_message_text(result, parse_mode="Markdown")
