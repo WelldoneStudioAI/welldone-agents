@@ -383,9 +383,10 @@ def diagnostic() -> str:
     if not actifs:
         return (
             "Registre foncier NON CONFIGURÉ — aucun enrichissement possible.\n"
-            "  Conséquence : le signal « détention 25 ans et plus » (25 pts) et les\n"
-            "  préavis d'exercice ne seront jamais détectés. Le scoring fonctionne,\n"
-            "  mais sur 60 des 100 points seulement.\n"
+            "  Conséquence : le signal « détention 25 ans et plus » (25 pts) ne peut\n"
+            "  jamais être attribué, et les préavis d'exercice ne sont pas détectés.\n"
+            "  Le scoring fonctionne, mais sur 75 des 100 points. La détresse\n"
+            "  financière reste captable par les ventes pour taxes des MRC.\n"
             "  → FONCIQ_API_KEY  : compte fonciq (5 crédits gratuits à l'inscription)\n"
             "  → JLR_API_KEY     : entente JLR, requise pour la recherche inversée\n"
             "                      de préavis d'exercice par territoire"

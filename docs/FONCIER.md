@@ -51,9 +51,16 @@ modifier** pour changer la stratégie.
 | 15 | Détresse financière | ventes pour taxes, préavis | gratuit / payant |
 | 10 | Investissement public à proximité | SEAO | gratuit |
 
-**Sans configuration payante, le plafond réel est de 60 points sur 100.** La
-commande `foncier sources` le dit explicitement plutôt que de laisser croire à
-un marché pauvre.
+Le plafond réel dépend de ce qui est configuré :
+
+| Configuration | Points atteignables |
+|---|---|
+| Sources gratuites seules | **40 / 100** |
+| + zonage (TOD, PPU) | **65 / 100** |
+| + registre foncier | **100 / 100** |
+
+`foncier sources` affiche l'état réel plutôt que de laisser croire à un marché
+pauvre quand c'est la configuration qui manque.
 
 ---
 
