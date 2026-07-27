@@ -9,3 +9,4 @@ zoho_token.json
 qbo_tokens.json
 *.log
 .venv/
+data/
