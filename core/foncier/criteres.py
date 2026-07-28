@@ -191,6 +191,18 @@ POIDS: tuple[Poids, ...] = (
 POIDS_PAR_CLE: dict[str, Poids] = {p.cle: p for p in POIDS}
 SCORE_MAX = sum(p.points for p in POIDS)
 
+# Signaux reconnus mais non notés. Ce sont des FAITS d'état, pas des indices de
+# motivation : les inclure au score fausserait l'échelle, les ignorer perdrait
+# de l'information.
+#
+# « mise_en_marche » en est l'exemple : qu'un immeuble soit sur Centris ne dit
+# rien de plus sur la motivation du vendeur — le score l'a déjà mesurée. Ça dit
+# que le dossier est actionnable MAINTENANT, ce qui relève du statut.
+SIGNAUX_INFORMATIFS: frozenset[str] = frozenset({
+    "mise_en_marche",
+    "retire_du_marche",
+})
+
 # Seuil au-delà duquel un dossier justifie de dépenser pour l'enrichissement
 # payant (registre foncier / JLR). C'est le robinet à dépenses du système.
 SEUIL_ENRICHISSEMENT = 45

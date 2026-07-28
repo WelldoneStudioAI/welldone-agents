@@ -112,6 +112,8 @@ rédiger. C'est là qu'il est bon.
 python dispatch.py foncier sources        # état de configuration — à lancer en premier
 python dispatch.py foncier scan           # ventes pour taxes des MRC (gratuit)
 python dispatch.py foncier seao           # avis d'appel d'offres → signaux de secteur
+python dispatch.py foncier marche         # alertes Centris → croisement avec la base
+python dispatch.py foncier calibrer --fichier alerte.eml       # mise au point du parseur
 python dispatch.py foncier roles --fichier data/role.geojson --millesime 2026
 python dispatch.py foncier top --limite 15 --detail
 python dispatch.py foncier top --municipalite Longueuil --score 50
@@ -127,11 +129,86 @@ Toutes acceptent `--telegram` et `--json`.
 
 | Cron (UTC) | Heure Montréal | Commande |
 |---|---|---|
+| `0 11 * * 1-5` | jours ouvrables 7 h | `marche` — alertes Centris |
 | `0 10 * * 2` | mardi 6 h | `scan` — ventes pour taxes |
 | `0 10 * * 4` | jeudi 6 h | `seao` — nouveaux avis |
-| `0 11 * * 1` | lundi 7 h | `brief` — dossiers du jour |
+| `30 11 * * 1` | lundi 7 h 30 | `brief` — dossiers du jour |
+
+`marche` est le seul scan quotidien : une mise en marché se joue en heures,
+alors qu'un rôle d'évaluation bouge une fois l'an.
 
 L'enrichissement payant n'est **jamais** automatique. Il se déclenche à la main.
+
+---
+
+## 4bis. Le côté « déjà à vendre » — alertes Centris
+
+Le système a deux moitiés, comme la thèse (« Tjrs Centris / mls ») :
+
+| | Off-market | Sur le marché |
+|---|---|---|
+| Commandes | `scan`, `seao`, `roles` | `marche` |
+| Ce que ça détecte | ce qui *va* se vendre | ce qui *est* à vendre |
+| Ton avantage | tu es seul à le voir | tu sais déjà tout sur le vendeur |
+
+**Aucune extraction du site Centris.** Le chemin est l'inverse : tu configures
+une alerte de recherche sauvegardée sur centris.ca avec tes critères, Centris
+t'envoie les nouvelles fiches par courriel, et l'agent lit ces courriels via ton
+compte Gmail déjà branché.
+
+C'est meilleur en ingénierie, pas seulement en droit :
+
+| Extraction directe | Alerte → Gmail |
+|---|---|
+| Tu tires la donnée | Centris te la pousse |
+| Casse à chaque refonte HTML | Format courriel stable |
+| Débit limité, blocage IP | Aucune limite |
+| Manquement aux conditions | Service prévu pour ça |
+| Filtrage par ton code | Filtrage par Centris, gratuit |
+
+### Ce qui est conservé
+
+Le lien et les **faits** : adresse, prix demandé, nombre de logements, numéro
+Centris. Ni photo, ni texte descriptif — la fiche se consulte sur centris.ca en
+cliquant le lien. Un fait n'est pas une œuvre protégée ; sa présentation l'est.
+
+### Le moment qui vaut le plus cher
+
+```
+Un immeuble était à 72 points dans ta base depuis 8 mois.
+Il apparaît sur Centris ce matin.
+
+Tu sais déjà : proprio depuis 31 ans, hypothèque presque éteinte,
+dans le PPU, terrain sous-utilisé, écart de +2 % sur la valeur au rôle.
+
+Les autres découvrent une fiche. Toi, un dossier complet, le jour 1.
+```
+
+C'est ce que produit `marche` : le rapprochement entre une fiche fraîche et un
+dossier suivi, via `core/foncier/adresse.py` qui réconcilie « 1450 ONTARIO E »
+du rôle avec « 1450, rue Ontario Est » de Centris.
+
+### Calibration obligatoire avant de s'y fier
+
+Le format exact des courriels d'alerte n'a pas pu être observé à l'écriture du
+parseur. Il emploie plusieurs stratégies et rapporte toujours ce qu'il a manqué.
+Avant la première utilisation :
+
+```bash
+python dispatch.py foncier calibrer --fichier alerte-centris.eml
+```
+
+Le rapport affiche, fiche par fiche, ce qui a été extrait, ce qui est marqué
+`❌ NON EXTRAIT`, et un extrait du texte réellement analysé. Les motifs
+d'extraction sont en tête de `core/foncier/sources/centris.py` et s'ajustent en
+quelques lignes.
+
+### Statut plutôt que score
+
+« Sur le marché » n'ajoute aucun point. Le score mesure la **motivation du
+vendeur** ; qu'un immeuble soit listé n'en dit rien de plus — le scoring l'a
+déjà évaluée. C'est un fait d'état, déclaré dans `criteres.SIGNAUX_INFORMATIFS`
+et exempté du calcul.
 
 ---
 
@@ -189,7 +266,7 @@ peut pas faire soi-même sur le registre public — c'est JLR qu'il faut.
 | Non fait | Raison |
 |---|---|
 | Scraper `registrefoncier.gouv.qc.ca` | Les conditions d'utilisation interdisent l'extraction automatisée massive. |
-| Scraper Centris / DuProprio | Mêmes interdictions contractuelles. Centris reste une consultation manuelle, ou via un courtier. |
+| Scraper Centris / DuProprio | Voir ci-dessous. Le système passe par les alertes courriel (`marche`), qui donnent le même résultat sans le risque. |
 | Inventer une valeur manquante | Un champ absent reste `None` et le brief le dit. Un chiffre inventé dans un dossier d'acquisition est pire que pas de chiffre. |
 | Contacter les propriétaires | Voir la section suivante. |
 
@@ -215,8 +292,31 @@ logements locatifs de la SCHL.
 ## 7. Les trois murs légaux
 
 **Conditions du Registre foncier** — pas d'extraction automatisée massive. Le
-code passe par des fournisseurs sous entente. Ne pas contourner : c'est le seul
-point où le projet peut mal tourner.
+code passe par des fournisseurs sous entente. Ne pas contourner.
+
+**Extraction de Centris** — la question revient toujours : « je n'ai signé aucun
+contrat, comment pourrais-je être en défaut ? » Trois réponses, dans l'ordre de
+solidité.
+
+1. **Le droit d'auteur ne demande aucun contrat.** Les photos et les textes des
+   fiches sont des œuvres protégées. Les reproduire est une contrefaçon, point.
+   C'est pourquoi ce système ne conserve **que des faits** — adresse, prix,
+   nombre de logements, lien.
+2. **Un contrat peut se former sans signature.** L'[article 1386 C.c.Q.](https://www.legisquebec.gouv.qc.ca/fr/version/lc/CCQ-1991?code=se:1386)
+   admet le consentement tacite. Dans [*Century 21 c. Rogers (Zoocasa)*, 2011 BCSC 1196](https://canliiconnects.org/en/summaries/31571),
+   un tribunal canadien a jugé qu'un « browsewrap » — de simples conditions liées
+   en bas de page, sans clic — liait un extracteur de fiches immobilières :
+   1 000 $ pour le contrat, 32 000 $ pour le droit d'auteur, injonction
+   permanente. L'[article 1435 C.c.Q.](https://www.legisquebec.gouv.qc.ca/fr/version/lc/CCQ-1991?code=se%3A1435)
+   offre une meilleure protection au Québec, sauf s'il est prouvé qu'on avait
+   connaissance des conditions — ce qu'un extracteur ciblé rend difficile à nier.
+3. **Filtrer exige d'extraire.** « Mon outil ne garde que le lien » décrit ce
+   qu'il conserve, pas ce qu'il fait : il a dû lire chaque fiche pour décider
+   laquelle retenir.
+
+Le risque concret n'est d'ailleurs pas le tribunal — c'est le blocage IP, la
+perte du compte, et une architecture qui casse à chaque refonte du site.
+`marche` obtient le même résultat par la porte d'en avant.
 
 **Loi 25** — le nom d'un propriétaire physique est un renseignement personnel.
 La [Commission d'accès à l'information][cai] est explicite : la prospection

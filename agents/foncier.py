@@ -12,6 +12,8 @@ et on ne paie l'enrichissement que sur les dossiers qui ont passé le filtre.
 Commandes :
   scan       → ventes pour taxes des MRC (gratuit, hebdomadaire)
   seao       → avis d'appel d'offres annonçant une revalorisation de secteur
+  marche     → alertes Centris reçues par courriel, croisées avec la base
+  calibrer   → mise au point du parseur d'alertes Centris
   roles      → charge un rôle d'évaluation et score le parc
   top        → meilleurs dossiers en base
   brief      → dossier rédigé sur les meilleurs candidats → Notion + Telegram
@@ -24,6 +26,8 @@ Exemples :
   python dispatch.py foncier sources
   python dispatch.py foncier scan --telegram
   python dispatch.py foncier roles --fichier data/role-montreal.geojson --millesime 2026
+  python dispatch.py foncier calibrer --fichier alerte-centris.eml
+  python dispatch.py foncier marche --jours 7
   python dispatch.py foncier top --limite 15 --municipalite Longueuil
   python dispatch.py foncier brief --limite 10
 """
@@ -43,12 +47,15 @@ class FoncierAgent(BaseAgent):
     name = "foncier"
     description = "Prospection immobilière QC : signaux publics → immeubles scorés"
     schedules = [
+        # Jours ouvrables 7h00 Montréal — les alertes Centris arrivent le matin.
+        # C'est le seul scan quotidien : une mise en marché se joue en heures.
+        {"cron": "0 11 * * 1-5", "command": "marche"},
         # Mardi 6h00 Montréal — les MRC publient leurs avis en semaine.
         {"cron": "0 10 * * 2", "command": "scan"},
         # Jeudi 6h00 Montréal — nouveaux avis SEAO de la semaine.
         {"cron": "0 10 * * 4", "command": "seao"},
-        # Lundi 7h00 Montréal — brief des meilleurs dossiers.
-        {"cron": "0 11 * * 1", "command": "brief"},
+        # Lundi 7h30 Montréal — brief des meilleurs dossiers.
+        {"cron": "30 11 * * 1", "command": "brief"},
     ]
 
     @property
@@ -56,6 +63,8 @@ class FoncierAgent(BaseAgent):
         return {
             "scan": self.scan_ventes_taxes,
             "seao": self.scan_seao,
+            "marche": self.scan_marche,
+            "calibrer": self.calibrer,
             "roles": self.charger_role,
             "top": self.top,
             "brief": self.brief,
@@ -221,6 +230,196 @@ class FoncierAgent(BaseAgent):
 
         if len(signaux) > 20:
             lignes.append(f"  … et {len(signaux) - 20} autre(s)")
+
+        return "\n".join(lignes)
+
+    async def scan_marche(self, context: dict | None = None) -> str:
+        """
+        Lit les alertes Centris reçues par courriel et les croise avec la base.
+
+        Le moment qui vaut le plus cher du système : un immeuble surveillé
+        depuis des mois arrive sur le marché, et tu sais déjà qui le détient,
+        depuis quand, et ce qu'on peut y construire — pendant que les autres
+        découvrent une fiche.
+
+        Options : --jours (défaut 7) --fichier (courriel local, hors Gmail)
+        """
+        from core.foncier.sources import centris
+        from core.foncier import scoring, store
+
+        context = context or {}
+        jours = int(context.get("jours", 7))
+        fichier = context.get("fichier")
+
+        try:
+            if fichier:
+                fiches, diagnostic = await asyncio.to_thread(centris.lire_fichier, fichier)
+            else:
+                fiches, diagnostic = await asyncio.to_thread(centris.lire_alertes, jours)
+        except FileNotFoundError:
+            return f"❌ Fichier introuvable : {fichier}"
+        except Exception as e:
+            log.error("foncier.marche: lecture impossible (%s)", e, exc_info=True)
+            return (
+                f"❌ Lecture des alertes impossible : {e}\n\n"
+                "Vérifier que les identifiants Google sont configurés "
+                "(GOOGLE_OAUTH_JSON), ou passer --fichier pour tester sur un "
+                "courriel sauvegardé."
+            )
+
+        if not fiches:
+            return (
+                "Aucune fiche Centris extraite.\n\n"
+                + diagnostic.rapport()
+                + "\n\n→ `foncier calibrer` affiche le texte réellement reçu."
+            )
+
+        # Croisement avec les dossiers déjà suivis.
+        suivis = await asyncio.to_thread(store.meilleurs, 5000, 0)
+        rapprochements, orphelines = centris.rapprocher(fiches, suivis)
+
+        # Les rapprochements enrichissent les dossiers existants ; les fiches
+        # sans correspondance entrent comme nouveaux dossiers à surveiller.
+        a_enregistrer = [r.immeuble for r in rapprochements]
+        for fiche in orphelines:
+            immeuble = centris.vers_immeuble(fiche)
+            if immeuble is not None:
+                a_enregistrer.append(immeuble)
+
+        for immeuble in a_enregistrer:
+            scoring.scorer(immeuble)
+
+        resume_store = await asyncio.to_thread(store.enregistrer, a_enregistrer)
+
+        lignes = [
+            f"🏘️  MARCHÉ — {len(fiches)} fiche(s) sur {jours} jours",
+            "",
+        ]
+
+        if rapprochements:
+            lignes.append(
+                f"🎯 {len(rapprochements)} DOSSIER(S) SUIVI(S) MAINTENANT SUR LE MARCHÉ"
+            )
+            lignes.append("")
+            for rapprochement in sorted(
+                rapprochements, key=lambda r: -r.immeuble.score
+            ):
+                lignes.append(rapprochement.resume())
+                lignes.append("")
+        else:
+            lignes.append("Aucune fiche ne correspond à un dossier déjà suivi.")
+            lignes.append("")
+
+        nouvelles = [f for f in orphelines if f.adresse]
+        if nouvelles:
+            lignes.append(f"Nouvelles fiches ({len(nouvelles)}) :")
+            for fiche in nouvelles[:15]:
+                lignes.append(f"  · {fiche.resume()}")
+            if len(nouvelles) > 15:
+                lignes.append(f"  … et {len(nouvelles) - 15} autre(s)")
+            lignes.append("")
+
+        sans_adresse = [f for f in orphelines if not f.adresse]
+        if sans_adresse:
+            lignes.append(
+                f"⚠️  {len(sans_adresse)} fiche(s) sans adresse extraite — "
+                "non rapprochables, non enregistrées :"
+            )
+            for fiche in sans_adresse[:5]:
+                lignes.append(f"     {fiche.url}")
+            lignes.append("")
+
+        lignes.append(
+            f"Base — {resume_store['nouveaux']} nouveau(x), "
+            f"{resume_store['mis_a_jour']} mis à jour"
+        )
+        lignes.append("")
+        lignes.append(centris.comparables(fiches, context.get("municipalite", "")))
+
+        if diagnostic.avertissements:
+            lignes.append("")
+            for avertissement in diagnostic.avertissements:
+                lignes.append(f"⚠️  {avertissement}")
+
+        return "\n".join(lignes)
+
+    async def calibrer(self, context: dict | None = None) -> str:
+        """
+        Rapport de mise au point du parseur d'alertes Centris.
+
+        Affiche ce qui a été extrait, ce qui a été manqué, et un extrait du
+        texte réellement analysé. À lancer sur un vrai courriel d'alerte avant
+        de se fier à `foncier marche`.
+
+        Options : --fichier (.eml/.html/.txt) OU --jours pour lire Gmail
+        """
+        from core.foncier.sources import centris
+
+        context = context or {}
+        fichier = context.get("fichier")
+        jours = int(context.get("jours", 7))
+
+        try:
+            if fichier:
+                fiches, diagnostic = await asyncio.to_thread(centris.lire_fichier, fichier)
+                origine = f"fichier {fichier}"
+            else:
+                fiches, diagnostic = await asyncio.to_thread(centris.lire_alertes, jours, 5)
+                origine = f"Gmail, {jours} derniers jours"
+        except FileNotFoundError:
+            return f"❌ Fichier introuvable : {fichier}"
+        except Exception as e:
+            return (
+                f"❌ {e}\n\n"
+                "Sauvegarder une alerte Centris en .eml et relancer avec "
+                "--fichier permet de calibrer sans accès Gmail."
+            )
+
+        lignes = [
+            "🔧 CALIBRATION — parseur d'alertes Centris",
+            f"   Source : {origine}",
+            f"   Expéditeurs surveillés : {', '.join(centris.EXPEDITEURS)}",
+            "",
+            diagnostic.rapport(),
+            "",
+        ]
+
+        if fiches:
+            lignes.append("FICHES EXTRAITES")
+            for fiche in fiches[:20]:
+                lignes.append(f"  #{fiche.no_centris}")
+                lignes.append(f"     url        : {fiche.url}")
+                lignes.append(f"     adresse    : {fiche.adresse or '❌ NON EXTRAITE'}")
+                lignes.append(f"     ville      : {fiche.municipalite or '❌ NON EXTRAITE'}")
+                lignes.append(
+                    "     prix       : "
+                    + (f"{fiche.prix_demande:,.0f} $".replace(",", " ")
+                       if fiche.prix_demande else "❌ NON EXTRAIT")
+                )
+                lignes.append(f"     type       : {fiche.type_declare or '—'}")
+                lignes.append(f"     logements  : {fiche.nombre_logements or '—'}")
+                if fiche.adresse:
+                    from core.foncier.adresse import cle as cle_adresse
+
+                    lignes.append(
+                        f"     clé rappro : "
+                        f"{cle_adresse(fiche.adresse, fiche.municipalite)}"
+                    )
+                lignes.append("")
+        else:
+            lignes.append("AUCUNE FICHE EXTRAITE")
+            lignes.append("")
+
+        lignes.append("TEXTE ANALYSÉ (1500 premiers caractères)")
+        lignes.append("─" * 55)
+        lignes.append(diagnostic.echantillon_texte or "(vide)")
+        lignes.append("─" * 55)
+        lignes.append("")
+        lignes.append(
+            "Si des champs sont ❌ NON EXTRAITS, envoie-moi ce rapport : les "
+            "motifs d'extraction sont dans core/foncier/sources/centris.py et "
+            "s'ajustent en quelques lignes."
+        )
 
         return "\n".join(lignes)
 
@@ -401,7 +600,9 @@ class FoncierAgent(BaseAgent):
         if not identifiant:
             return "❌ Préciser --id (identifiant du dossier, visible dans `foncier top`)."
 
-        statuts_valides = ("nouveau", "surveille", "enrichi", "contacte", "rejete")
+        statuts_valides = (
+            "nouveau", "surveille", "enrichi", "en_vente", "contacte", "rejete"
+        )
         statut = context.get("statut")
         if statut and statut not in statuts_valides:
             return f"❌ Statut invalide. Valides : {', '.join(statuts_valides)}"

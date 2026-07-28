@@ -23,6 +23,7 @@ from core.foncier.criteres import (
     POIDS,
     POIDS_PAR_CLE,
     SCORE_MAX,
+    SIGNAUX_INFORMATIFS,
     groupe_cubf,
 )
 from core.foncier.modele import Immeuble
@@ -222,9 +223,11 @@ def scorer(immeuble: Immeuble, criteres: Criteres = DEFAUT) -> int:
     total = round(sum(detail.values()))
 
     # Signaux orphelins : une clé qui ne correspond à aucun poids serait
-    # silencieusement ignorée. On le dit plutôt que de la perdre.
+    # silencieusement ignorée. On le dit plutôt que de la perdre. Les signaux
+    # informatifs déclarés (mise en marché, etc.) sont exemptés — ils portent
+    # un fait d'état, pas un indice de motivation.
     for signal in immeuble.signaux:
-        if signal.cle not in POIDS_PAR_CLE:
+        if signal.cle not in POIDS_PAR_CLE and signal.cle not in SIGNAUX_INFORMATIFS:
             log.warning(
                 "scoring: signal '%s' sans poids défini (immeuble %s) — ignoré",
                 signal.cle,

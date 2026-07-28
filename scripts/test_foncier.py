@@ -377,6 +377,207 @@ verifier("NON EFFECTUÉ" in budget.resume(), "refus budgétaire annoncé, jamais
 verifier(budget.depense == 10.0, "dépense totalisée exactement")
 
 # ─────────────────────────────────────────────────────────────────────────────
+print("\n13. Normalisation d'adresses")
+
+from core.foncier import adresse as adr  # noqa: E402
+
+verifier(
+    adr.normaliser_municipalite("Montréal (Rosemont—La Petite-Patrie)") == "montreal",
+    "arrondissement entre parenthèses retiré de la municipalité",
+)
+verifier(
+    adr.normaliser_municipalite("Ville de Longueuil") == "longueuil",
+    "préfixe « Ville de » retiré",
+)
+verifier(
+    adr.normaliser_municipalite("St-Jean-sur-Richelieu")
+    == adr.normaliser_municipalite("Saint-Jean-sur-Richelieu"),
+    "Saint et St donnent la même municipalité",
+)
+
+# Le cœur du croisement : les mêmes immeubles écrits différemment.
+paires_identiques = [
+    ("1450 rue Ontario Est", "Montréal", "1450, Ontario E.", "Montreal"),
+    ("1450 ONTARIO E", "MONTRÉAL", "1450, rue Ontario Est", "Montréal"),
+    ("200 boul. Taschereau", "Longueuil", "200, boulevard Taschereau", "Longueuil"),
+    ("55 av. du Parc", "Montréal", "55 avenue Parc", "Montréal"),
+    ("12 ch. Saint-Denis", "Laval", "12 chemin St-Denis", "Laval"),
+    ("1450-1454 rue Ontario Est", "Montréal", "1450 rue Ontario Est", "Montréal"),
+    ("1450 rue Ontario Est, app. 3", "Montréal", "1450 rue Ontario Est", "Montréal"),
+]
+for adresse_a, mun_a, adresse_b, mun_b in paires_identiques:
+    verifier(
+        adr.correspond(adresse_a, mun_a, adresse_b, mun_b),
+        f"« {adresse_a} » ≡ « {adresse_b} »",
+    )
+
+# Ce qui ne doit PAS se rapprocher.
+paires_differentes = [
+    ("1450 rue Ontario Est", "Montréal", "1452 rue Ontario Est", "Montréal"),
+    ("1450 rue Ontario Est", "Montréal", "1450 rue Ontario Est", "Laval"),
+    ("1450 rue Ontario Est", "Montréal", "1450 rue Sherbrooke Est", "Montréal"),
+    ("100 rue Principale", "Granby", "100 rue Principale", "Sherbrooke"),
+]
+for adresse_a, mun_a, adresse_b, mun_b in paires_differentes:
+    verifier(
+        not adr.correspond(adresse_a, mun_a, adresse_b, mun_b),
+        f"« {adresse_a} / {mun_a} » ≠ « {adresse_b} / {mun_b} »",
+    )
+
+# Le type de voie seul ne doit jamais suffire à rapprocher.
+verifier(
+    not adr.correspond("100 rue Alpha", "Laval", "100 rue Bravo", "Laval"),
+    "deux rues différentes au même numéro ne se rapprochent pas",
+)
+
+# L'identifiant de l'immeuble doit hériter de la normalisation.
+verifier(
+    Immeuble(adresse="1450 rue Ontario Est", municipalite="Montréal").identifiant
+    == Immeuble(adresse="1450, Ontario E.", municipalite="Montreal").identifiant,
+    "même immeuble, deux graphies → même identifiant",
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n14. Parseur d'alertes Centris")
+
+from core.foncier.sources import centris  # noqa: E402
+
+courriel = """<html><body>
+<table><tr><td>
+  <a href="https://www.centris.ca/fr/triplex~a-vendre~montreal-rosemont/27384512">
+    Triplex &agrave; vendre
+  </a><br>
+  1450, rue Ontario Est, Montr&eacute;al (Rosemont)<br>
+  <strong>2&nbsp;450&nbsp;000&nbsp;$</strong><br>
+  3 logements
+</td></tr>
+<tr><td>
+  <a href="https://www.centris.ca/fr/immeuble-a-revenus~a-vendre~longueuil/88112233">
+    Immeuble &agrave; revenus
+  </a><br>
+  200, boulevard Taschereau, Longueuil<br>
+  <strong>3&nbsp;500&nbsp;000&nbsp;$</strong><br>
+  8 logements
+</td></tr></table>
+</body></html>"""
+
+diag = centris.Diagnostic()
+extraites = centris.extraire(courriel, "Nouvelles inscriptions", diag)
+
+verifier(len(extraites) == 2, f"2 fiches extraites (obtenu : {len(extraites)})")
+verifier(
+    {f.no_centris for f in extraites} == {"27384512", "88112233"},
+    "numéros Centris extraits depuis les URL",
+)
+
+premiere = next(f for f in extraites if f.no_centris == "27384512")
+verifier("1450" in premiere.adresse and "Ontario" in premiere.adresse,
+         f"adresse extraite : « {premiere.adresse} »")
+verifier(premiere.prix_demande == 2_450_000, f"prix extrait : {premiere.prix_demande}")
+verifier(premiere.nombre_logements == 3, "nombre de logements extrait")
+verifier(premiere.type_declare == "triplex", "type d'immeuble reconnu")
+verifier(premiere.url.startswith("https://www.centris.ca/"), "URL conservée intacte")
+
+seconde = next(f for f in extraites if f.no_centris == "88112233")
+verifier(seconde.prix_demande == 3_500_000, "prix de la seconde fiche")
+verifier(seconde.nombre_logements == 8, "8 logements extraits")
+
+# Lien encapsulé dans un traqueur : l'URL réelle est encodée.
+courriel_traque = (
+    '<a href="https://clic.infolettre.example/r?u='
+    "https%3A%2F%2Fwww.centris.ca%2Ffr%2Fduplex~a-vendre~laval%2F55667788"
+    '">Voir la fiche</a> 1 800 000 $ 2 logements'
+)
+diag2 = centris.Diagnostic()
+traquees = centris.extraire(courriel_traque, "", diag2)
+verifier(
+    any(f.no_centris == "55667788" for f in traquees),
+    "lien Centris récupéré à travers un redirecteur de suivi",
+)
+
+# Un courriel sans fiche ne doit rien inventer.
+diag3 = centris.Diagnostic()
+vides = centris.extraire("<html><body>Bonjour, rien ici.</body></html>", "", diag3)
+verifier(len(vides) == 0, "aucune fiche inventée depuis un courriel vide")
+verifier(diag3.fiches_uniques == 0, "diagnostic cohérent sur courriel vide")
+verifier("Bonjour" in diag3.echantillon_texte, "échantillon de texte conservé pour calibration")
+
+rapport_diag = diag.rapport()
+verifier("Fiches uniques" in rapport_diag, "rapport de calibration lisible")
+verifier("2/2" in rapport_diag, "compteurs du diagnostic exacts")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n15. Croisement marché × base")
+
+suivi = Immeuble(
+    lot="5 123 456",
+    adresse="1450 rue Ontario Est",
+    municipalite="Montréal",
+    cubf=1000,
+    nombre_logements=3,
+    valeur_totale=2_000_000,
+    date_acquisition="1993-04-01",
+)
+suivi.ajouter_signal(Signal("aire_tod", "Aire TOD Frontenac", "test", intensite=1.0))
+scoring.scorer(suivi)
+
+rapprochements, orphelines = centris.rapprocher(extraites, [suivi])
+
+verifier(len(rapprochements) == 1, "la fiche Centris retrouve le dossier suivi")
+verifier(len(orphelines) == 1, "la fiche sans correspondance reste orpheline")
+
+rapprochement = rapprochements[0]
+verifier(
+    rapprochement.immeuble.lot == "5 123 456",
+    "le rapprochement pointe le bon immeuble, avec son lot du rôle",
+)
+verifier(
+    rapprochement.ecart_prix is not None
+    and abs(rapprochement.ecart_prix - 0.225) < 0.001,
+    f"écart prix demandé / valeur au rôle calculé ({rapprochement.ecart_prix:+.1%})",
+)
+verifier(
+    rapprochement.immeuble.a_signal("mise_en_marche"),
+    "signal de mise en marché attaché au dossier suivi",
+)
+verifier(
+    "27384512" in rapprochement.resume(),
+    "le résumé porte le numéro Centris",
+)
+
+# La mise en marché est informative : elle ne doit pas gonfler le score.
+score_avant = suivi.score
+scoring.scorer(suivi)
+verifier(
+    suivi.score == score_avant,
+    "le signal de mise en marché ne change pas le score (signal informatif)",
+)
+verifier(
+    "mise_en_marche" not in suivi.detail_score,
+    "mise_en_marche absent du détail du score",
+)
+
+# Une fiche orpheline avec adresse doit pouvoir devenir un dossier.
+orpheline = orphelines[0]
+nouvel_immeuble = centris.vers_immeuble(orpheline)
+verifier(nouvel_immeuble is not None, "fiche orpheline convertie en immeuble")
+verifier(nouvel_immeuble.statut == "surveille", "nouveau dossier marqué « surveille »")
+verifier(
+    nouvel_immeuble.valeur_totale == 3_500_000,
+    "prix demandé repris comme valeur du dossier",
+)
+
+sans_adresse = centris.FicheCentris(no_centris="1", url="https://www.centris.ca/1")
+verifier(
+    centris.vers_immeuble(sans_adresse) is None,
+    "fiche sans adresse refusée plutôt que créée avec une identité bancale",
+)
+
+comparaison = centris.comparables(extraites)
+verifier("médiane" in comparaison, "portrait des prix demandés produit")
+verifier("logement" in comparaison, "prix par logement calculé")
+
+# ─────────────────────────────────────────────────────────────────────────────
 print("\n" + "═" * 60)
 if echecs:
     print(f"❌ {len(echecs)} vérification(s) en échec :")

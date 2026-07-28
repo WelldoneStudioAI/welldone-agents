@@ -92,11 +92,16 @@ class Immeuble:
 
         Le lot est la seule identité qui survit à un changement d'adresse ou de
         matricule ; on retombe sur le matricule, puis sur adresse+municipalité.
+
+        L'adresse passe par `adresse.cle()` : sans normalisation, « 1450 ONTARIO E »
+        du rôle et « 1450, rue Ontario Est » de Centris seraient deux immeubles.
         """
+        from core.foncier.adresse import cle as cle_adresse
+
         for base in (
             f"lot:{self.lot}" if self.lot else None,
             f"mat:{self.municipalite}:{self.matricule}" if self.matricule else None,
-            f"adr:{self.municipalite}:{self.adresse}".lower() if self.adresse else None,
+            f"adr:{cle_adresse(self.adresse, self.municipalite)}" if self.adresse else None,
         ):
             if base:
                 return hashlib.sha1(base.encode("utf-8")).hexdigest()[:16]
