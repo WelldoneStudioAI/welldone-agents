@@ -19,7 +19,9 @@ par la machine reste un avis à lire à la main.
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
 from dataclasses import dataclass
 from datetime import date
@@ -59,6 +61,71 @@ REGISTRE_MRC: tuple[SourceMRC, ...] = (
     SourceMRC("MRC de Memphrémagog", "https://www.mrcmemphremagog.com/vente-pour-taxes", "Estrie"),
     SourceMRC("MRC du Haut-Saint-Laurent", "https://mrchsl.com/", "Montérégie"),
 )
+
+# Registre local, pour étendre la couverture sans toucher au code. Le Québec
+# compte environ 85 MRC : les ajouter est de la saisie, et c'est le meilleur
+# retour sur temps investi du projet.
+#
+#     python dispatch.py foncier mrc --ajouter "MRC de Rouville" \
+#         --url https://mrcrouville.qc.ca/vente-pour-taxes/
+FICHIER_MRC = Path(
+    os.environ.get("FONCIER_MRC_FICHIER", "./data/foncier/mrc.json")
+)
+
+
+def charger_registre() -> tuple[SourceMRC, ...]:
+    """
+    Registre effectif : les MRC vérifiées du code, plus celles ajoutées localement.
+
+    En cas de doublon de nom, l'entrée locale l'emporte — elle est plus récente
+    que ce qui est figé dans le code.
+    """
+    par_nom = {source.nom: source for source in REGISTRE_MRC}
+
+    if FICHIER_MRC.exists():
+        try:
+            with open(FICHIER_MRC, "r", encoding="utf-8") as fichier:
+                for entree in json.load(fichier):
+                    nom = (entree.get("nom") or "").strip()
+                    url = (entree.get("url_page") or entree.get("url") or "").strip()
+                    if nom and url:
+                        par_nom[nom] = SourceMRC(nom, url, entree.get("region", ""))
+        except (json.JSONDecodeError, OSError) as e:
+            log.warning("foncier.ventes_taxes: %s illisible (%s)", FICHIER_MRC, e)
+
+    return tuple(sorted(par_nom.values(), key=lambda s: s.nom))
+
+
+def ajouter_mrc(nom: str, url: str, region: str = "") -> int:
+    """
+    Ajoute une MRC au registre local. Retourne le nombre total de MRC connues.
+
+    Raises:
+        ValueError: si le nom ou l'URL manque.
+    """
+    nom, url = (nom or "").strip(), (url or "").strip()
+    if not nom or not url:
+        raise ValueError("Le nom et l'URL de la MRC sont requis")
+    if not url.lower().startswith(("http://", "https://")):
+        raise ValueError(f"URL invalide : {url}")
+
+    FICHIER_MRC.parent.mkdir(parents=True, exist_ok=True)
+    entrees: list[dict] = []
+    if FICHIER_MRC.exists():
+        try:
+            with open(FICHIER_MRC, "r", encoding="utf-8") as fichier:
+                entrees = json.load(fichier)
+        except (json.JSONDecodeError, OSError):
+            entrees = []
+
+    entrees = [e for e in entrees if (e.get("nom") or "").strip() != nom]
+    entrees.append({"nom": nom, "url_page": url, "region": region})
+
+    with open(FICHIER_MRC, "w", encoding="utf-8") as fichier:
+        json.dump(entrees, fichier, ensure_ascii=False, indent=2)
+
+    log.info("foncier.ventes_taxes: MRC ajoutée — %s", nom)
+    return len(charger_registre())
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Extraction
@@ -261,14 +328,15 @@ def scanner_mrc(source: SourceMRC, forcer: bool = False) -> ResultatMRC:
 
 
 def scanner(
-    sources: tuple[SourceMRC, ...] = REGISTRE_MRC, forcer: bool = False
+    sources: Optional[tuple[SourceMRC, ...]] = None, forcer: bool = False
 ) -> tuple[list[Immeuble], list[ResultatMRC]]:
     """
-    Scanne toutes les MRC du registre.
+    Scanne toutes les MRC du registre (code + ajouts locaux).
 
     Returns:
         (immeubles trouvés, résultats détaillés par MRC — y compris les échecs)
     """
+    sources = sources if sources is not None else charger_registre()
     tous: list[Immeuble] = []
     resultats: list[ResultatMRC] = []
 

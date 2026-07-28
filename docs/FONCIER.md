@@ -5,6 +5,29 @@ de développement, **avant** qu'ils arrivent sur Centris.
 
 ---
 
+## 0. Démarrer en trois commandes
+
+```bash
+python dispatch.py foncier sources     # ce qui est branché, ce qui manque
+python dispatch.py foncier ingerer     # remplit la base : rôles, MRC, SEAO
+python dispatch.py foncier aujourdhui  # ce qui mérite une action
+```
+
+Puis l'interface : **`https://<ton-domaine>/foncier/`**
+
+| Onglet | Ce qu'on y fait |
+|---|---|
+| Aujourd'hui | mises en marché, détresse, scores en hausse, relances dues |
+| Dossiers | liste filtrable par score, municipalité, statut |
+| Carte | candidats géolocalisés, taille et couleur selon le score |
+| Pipeline | kanban nouveau → surveillé → en vente → contacté |
+| Thèse | critères actifs, répartition du score, état de configuration |
+
+Le panneau de détail d'un dossier porte le score expliqué signal par signal, le
+**calculateur d'offre**, le journal des contacts et la fiche imprimable.
+
+---
+
 ## 1. Le malentendu à lever en premier
 
 Le Registre foncier du Québec **ne contient aucun immeuble à vendre**. Il publie
@@ -110,6 +133,11 @@ rédiger. C'est là qu'il est bon.
 
 ```bash
 python dispatch.py foncier sources        # état de configuration — à lancer en premier
+python dispatch.py foncier ingerer        # tout charger d'un coup
+python dispatch.py foncier aujourdhui     # ce qui bouge et mérite une action
+python dispatch.py foncier mrc            # registre des MRC
+python dispatch.py foncier mrc --ajouter "MRC de Rouville" --url https://…
+python dispatch.py foncier analyse --id a1b2c3 --prix 2600000   # fiche financière
 python dispatch.py foncier scan           # ventes pour taxes des MRC (gratuit)
 python dispatch.py foncier seao           # avis d'appel d'offres → signaux de secteur
 python dispatch.py foncier marche         # alertes Centris → croisement avec la base
@@ -330,16 +358,77 @@ acheteur et vendeur contre rémunération, c'est du courtage : permis obligatoir
 
 ---
 
+## 7bis. Analyse de transaction
+
+Le moteur répond à « lequel regarder ». `core/foncier/montage.py` répond à
+« combien offrir, et est-ce que ça tient debout ».
+
+Trois calculs décident de tout :
+
+| | Ce que ça dit |
+|---|---|
+| **Prix pour un cap de 7-8 %** | ce que tu peux payer selon ta thèse |
+| **Plafond du prêteur (DSCR 1,20)** | ce que la banque acceptera de financer — souvent plus contraignant |
+| **Cashflow** | ce qui reste après la dette ; un immeuble à 7 % financé à 5,75 % laisse peu |
+
+Quatre scénarios de financement sont comparés automatiquement (25 %, 15 %, 35 %,
+amorti 30 ans), plus une **analyse de sensibilité** : que devient le dossier si
+le NOI réel est 15 % sous l'estimation ? C'est la question qui compte quand le
+NOI vient du rôle et non des états financiers.
+
+```bash
+python dispatch.py foncier analyse --id a1b2c3 --prix 2600000
+python dispatch.py foncier analyse --id a1b2c3 --revenus 280000 --depenses 110000
+```
+
+Dans l'interface, le calculateur est dans le panneau du dossier et se recalcule
+en direct.
+
+**Les droits de mutation utilisent le barème de base du Québec.** Montréal
+applique des tranches supérieures au-delà de 500 000 $ : sur un immeuble de
+plusieurs millions, la « taxe de bienvenue » réelle est plus élevée que celle
+affichée. La fiche le rappelle chaque fois que la municipalité est Montréal.
+
+---
+
+## 7ter. Suivi et relances
+
+`core/foncier/suivi.py` porte ce que le moteur ne peut pas savoir : à qui tu as
+parlé, ce qui s'est dit, et quand relancer.
+
+Après chaque contact journalisé, **la relance se programme toute seule** selon le
+résultat :
+
+| Résultat | Relance |
+|---|---|
+| visite planifiée | 3 jours |
+| intéressé | 5 jours |
+| offre déposée | 5 jours |
+| à rappeler | 7 jours |
+| états financiers demandés | 10 jours |
+| sans réponse | 14 jours |
+| refus | 180 jours — un refus n'est pas éternel |
+
+Un refus renvoie le dossier en **surveillance**, pas à la poubelle : le
+propriétaire qui dit non en juillet peut dire oui après une succession.
+
+`foncier aujourdhui` agrège tout ce qui mérite une action — mises en marché,
+signaux de détresse, scores en hausse, relances en retard — trié par urgence,
+un dossier n'apparaissant qu'une fois.
+
+---
+
 ## 8. Vérification
 
 ```bash
 python scripts/test_foncier.py
 ```
 
-60+ vérifications sur données synthétiques, sans réseau ni clé d'API : filtres
+188 vérifications sur données synthétiques, sans réseau ni clé d'API : filtres
 de la thèse, scoring, estimations financières, géométrie, tolérance de schéma
-des rôles, extraction des avis de vente pour taxes, persistance, garde-fous
-budgétaires.
+des rôles, extraction des avis de vente pour taxes, normalisation d'adresses,
+parseur d'alertes Centris, croisement marché × base, montage financier, CRM,
+registre des MRC, persistance et garde-fous budgétaires.
 
 À relancer après **toute** modification de `criteres.py`.
 

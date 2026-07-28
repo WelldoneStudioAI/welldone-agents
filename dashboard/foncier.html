@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WD — Prospection foncière</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg: #0A0A0A; --bg2: #111111; --bg3: #1A1A1A; --border: #222222;
+    --text: #F0F0F0; --muted: #666666; --accent: #FFFFFF;
+    --green: #4ADE80; --red: #F87171; --yellow: #FBBF24; --blue: #60A5FA;
+    --orange: #FF8A3D; --radius: 8px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 14px; line-height: 1.5; height: 100vh; overflow: hidden;
+  }
+  .mono { font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace; }
+
+  /* ── Écran d'authentification ─────────────────────────────────────────── */
+  .auth { display: flex; height: 100vh; align-items: center; justify-content: center;
+          flex-direction: column; gap: 12px; }
+  .auth input { background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+                padding: 10px 14px; border-radius: var(--radius); width: 280px; }
+  .auth button { background: var(--accent); color: #000; border: 0; padding: 10px 20px;
+                 border-radius: var(--radius); cursor: pointer; font-weight: 600; }
+
+  /* ── Structure ────────────────────────────────────────────────────────── */
+  .app { display: none; grid-template-rows: auto auto 1fr; height: 100vh; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 18px;
+           border-bottom: 1px solid var(--border); background: var(--bg2); }
+  header h1 { font-size: 15px; font-weight: 600; letter-spacing: -0.2px; }
+  header .compteur { color: var(--muted); font-size: 12px; }
+  header .grandir { flex: 1; }
+
+  .onglets { display: flex; gap: 2px; padding: 0 18px; border-bottom: 1px solid var(--border);
+             background: var(--bg2); overflow-x: auto; }
+  .onglet { padding: 10px 16px; cursor: pointer; color: var(--muted); font-size: 13px;
+            border-bottom: 2px solid transparent; white-space: nowrap; }
+  .onglet:hover { color: var(--text); }
+  .onglet.actif { color: var(--text); border-bottom-color: var(--orange); }
+  .onglet .pastille { background: var(--orange); color: #000; border-radius: 10px;
+                      padding: 1px 6px; font-size: 10px; font-weight: 700; margin-left: 6px; }
+
+  main { overflow: hidden; position: relative; }
+  .vue { display: none; height: 100%; overflow: auto; }
+  .vue.actif { display: block; }
+
+  /* ── Bandeau d'avertissement ──────────────────────────────────────────── */
+  .avis { margin: 14px 18px; padding: 12px 14px; border-radius: var(--radius);
+          background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.3);
+          color: var(--yellow); font-size: 12.5px; }
+  .avis.vide { background: rgba(96,165,250,0.08); border-color: rgba(96,165,250,0.3);
+               color: var(--blue); }
+  .avis code { background: rgba(0,0,0,0.4); padding: 2px 6px; border-radius: 4px; }
+
+  /* ── Filtres ──────────────────────────────────────────────────────────── */
+  .filtres { display: flex; gap: 10px; padding: 12px 18px; flex-wrap: wrap;
+             align-items: center; border-bottom: 1px solid var(--border); }
+  .filtres input, .filtres select {
+    background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 10px; border-radius: 6px; font-size: 13px; font-family: inherit;
+  }
+  .filtres label { color: var(--muted); font-size: 12px; }
+
+  /* ── Liste ────────────────────────────────────────────────────────────── */
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: 10px 18px; font-size: 11px; text-transform: uppercase;
+       letter-spacing: 0.5px; color: var(--muted); border-bottom: 1px solid var(--border);
+       position: sticky; top: 0; background: var(--bg); z-index: 2; }
+  td { padding: 11px 18px; border-bottom: 1px solid var(--bg3); font-size: 13px; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: var(--bg2); }
+  .droite { text-align: right; }
+
+  .score { display: inline-flex; align-items: center; justify-content: center;
+           min-width: 34px; height: 24px; border-radius: 6px; font-weight: 700;
+           font-size: 12px; font-family: 'SF Mono', monospace; }
+  .s-haut { background: rgba(74,222,128,0.16); color: var(--green); }
+  .s-moyen { background: rgba(251,191,36,0.16); color: var(--yellow); }
+  .s-bas { background: var(--bg3); color: var(--muted); }
+
+  .etiq { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10.5px;
+          background: var(--bg3); color: var(--muted); margin-right: 4px; }
+  .etiq.tod { background: rgba(96,165,250,0.15); color: var(--blue); }
+  .etiq.ppu { background: rgba(167,139,250,0.15); color: #A78BFA; }
+  .etiq.detresse { background: rgba(248,113,113,0.15); color: var(--red); }
+  .etiq.detention { background: rgba(255,138,61,0.15); color: var(--orange); }
+  .etiq.marche { background: rgba(74,222,128,0.15); color: var(--green); }
+
+  /* ── Carte ────────────────────────────────────────────────────────────── */
+  #carte { height: 100%; width: 100%; background: var(--bg2); }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+    background: var(--bg2); color: var(--text); border: 1px solid var(--border);
+  }
+  .leaflet-popup-content { margin: 10px 12px; font-size: 12.5px; }
+  .carte-vide { display: flex; height: 100%; align-items: center; justify-content: center;
+                flex-direction: column; gap: 10px; color: var(--muted); text-align: center;
+                padding: 40px; }
+
+  /* ── Pipeline ─────────────────────────────────────────────────────────── */
+  .kanban { display: flex; gap: 12px; padding: 16px 18px; height: 100%;
+            overflow-x: auto; align-items: flex-start; }
+  .colonne { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius);
+             min-width: 240px; max-width: 260px; max-height: 100%; display: flex;
+             flex-direction: column; }
+  .colonne h3 { padding: 10px 12px; font-size: 11px; text-transform: uppercase;
+                letter-spacing: 0.5px; color: var(--muted); border-bottom: 1px solid var(--border); }
+  .colonne .cartes { overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+  .carte-doss { background: var(--bg3); border-radius: 6px; padding: 10px; cursor: pointer;
+                border: 1px solid transparent; }
+  .carte-doss:hover { border-color: var(--border); }
+  .carte-doss .titre { font-size: 12.5px; font-weight: 500; margin-bottom: 3px; }
+  .carte-doss .sous { font-size: 11px; color: var(--muted); }
+
+  /* ── Aujourd'hui ──────────────────────────────────────────────────────── */
+  .mouvements { padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+  .mouvement { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius);
+               padding: 12px 14px; cursor: pointer; display: flex; gap: 12px; align-items: center; }
+  .mouvement:hover { border-color: var(--muted); }
+  .mouvement .genre { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px;
+                      padding: 3px 8px; border-radius: 4px; white-space: nowrap; }
+  .g-mise_en_marche { background: rgba(74,222,128,0.15); color: var(--green); }
+  .g-detresse { background: rgba(248,113,113,0.15); color: var(--red); }
+  .g-progression { background: rgba(255,138,61,0.15); color: var(--orange); }
+  .g-relance_due { background: rgba(96,165,250,0.15); color: var(--blue); }
+
+  /* ── Panneau de détail ────────────────────────────────────────────────── */
+  .panneau { position: fixed; top: 0; right: 0; width: min(560px, 100%); height: 100vh;
+             background: var(--bg2); border-left: 1px solid var(--border); z-index: 900;
+             transform: translateX(100%); transition: transform .18s ease; overflow-y: auto; }
+  .panneau.ouvert { transform: translateX(0); }
+  .panneau header { position: sticky; top: 0; z-index: 3; }
+  .panneau .corps { padding: 16px 18px; display: flex; flex-direction: column; gap: 18px; }
+  .bloc h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+             color: var(--muted); margin-bottom: 8px; }
+  .paire { display: flex; justify-content: space-between; padding: 5px 0;
+           border-bottom: 1px solid var(--bg3); font-size: 13px; }
+  .paire span:first-child { color: var(--muted); }
+  pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+        padding: 12px; font-size: 11.5px; overflow-x: auto; white-space: pre-wrap;
+        font-family: 'SF Mono', monospace; color: #C8C8C8; }
+  .fermer { background: none; border: 0; color: var(--muted); font-size: 20px; cursor: pointer; }
+
+  .btn { background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+         padding: 7px 12px; border-radius: 6px; cursor: pointer; font-size: 12.5px;
+         font-family: inherit; }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primaire { background: var(--orange); color: #000; border-color: var(--orange);
+                  font-weight: 600; }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  .calc { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .calc label { display: flex; flex-direction: column; gap: 3px; font-size: 11px;
+                color: var(--muted); }
+  .calc input { background: var(--bg); border: 1px solid var(--border); color: var(--text);
+                padding: 6px 9px; border-radius: 5px; font-size: 13px; font-family: inherit; }
+  .calc .large { grid-column: 1 / -1; }
+
+  .verdict { padding: 8px 11px; border-radius: 6px; font-size: 12.5px; font-weight: 500; }
+  .v-ok { background: rgba(74,222,128,0.12); color: var(--green); }
+  .v-serre { background: rgba(251,191,36,0.12); color: var(--yellow); }
+  .v-non { background: rgba(248,113,113,0.12); color: var(--red); }
+
+  .vide { padding: 50px 20px; text-align: center; color: var(--muted); }
+  .chargement { padding: 40px; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="auth" id="auth">
+  <h1>Prospection foncière</h1>
+  <input id="jeton" type="password" placeholder="Token d'accès" autocomplete="current-password">
+  <button onclick="connecter()">Entrer</button>
+  <p id="auth-erreur" style="color:var(--red);font-size:12px"></p>
+</div>
+
+<div class="app" id="app">
+  <header>
+    <h1>🏗️ Prospection foncière</h1>
+    <span class="compteur" id="compteur">…</span>
+    <span class="grandir"></span>
+    <button class="btn" onclick="lancer('marche')">Scanner le marché</button>
+    <button class="btn" onclick="lancer('scan')">Ventes pour taxes</button>
+    <button class="btn" onclick="tout_recharger()">↻</button>
+  </header>
+
+  <div class="onglets">
+    <div class="onglet actif" data-vue="aujourdhui">Aujourd'hui <span class="pastille" id="p-mouv" style="display:none">0</span></div>
+    <div class="onglet" data-vue="liste">Dossiers</div>
+    <div class="onglet" data-vue="carte">Carte</div>
+    <div class="onglet" data-vue="pipeline">Pipeline</div>
+    <div class="onglet" data-vue="these">Thèse</div>
+  </div>
+
+  <main>
+    <div class="vue actif" id="v-aujourdhui">
+      <div id="avis-config"></div>
+      <div class="mouvements" id="mouvements"><div class="chargement">Chargement…</div></div>
+    </div>
+
+    <div class="vue" id="v-liste">
+      <div class="filtres">
+        <label>Score min <input type="number" id="f-score" value="0" min="0" max="100" style="width:70px"></label>
+        <label>Municipalité <input type="text" id="f-mun" placeholder="toutes" style="width:140px"></label>
+        <label>Statut
+          <select id="f-statut">
+            <option value="">tous</option>
+            <option value="nouveau">nouveau</option>
+            <option value="surveille">surveillé</option>
+            <option value="enrichi">enrichi</option>
+            <option value="en_vente">en vente</option>
+            <option value="contacte">contacté</option>
+            <option value="rejete">rejeté</option>
+          </select>
+        </label>
+        <button class="btn" onclick="charger_liste()">Filtrer</button>
+      </div>
+      <div id="liste"><div class="chargement">Chargement…</div></div>
+    </div>
+
+    <div class="vue" id="v-carte"><div id="carte"></div></div>
+
+    <div class="vue" id="v-pipeline"><div class="kanban" id="kanban"><div class="chargement">Chargement…</div></div></div>
+
+    <div class="vue" id="v-these"><div id="these" class="mouvements"></div></div>
+  </main>
+</div>
+
+<div class="panneau" id="panneau">
+  <header>
+    <h1 id="p-titre">Dossier</h1>
+    <span class="grandir"></span>
+    <button class="fermer" onclick="fermer_panneau()">✕</button>
+  </header>
+  <div class="corps" id="p-corps"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const BASE = window.location.origin;
+let JETON = localStorage.getItem('foncier_token') || new URLSearchParams(location.search).get('token') || '';
+let CARTE = null, COUCHE = null, DOSSIER = null, STATS = null;
+
+/* ── Réseau ──────────────────────────────────────────────────────────────── */
+async function api(chemin, options = {}) {
+  const entetes = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  if (JETON) entetes['Authorization'] = 'Bearer ' + JETON;
+  const r = await fetch(BASE + '/foncier/api' + chemin, { ...options, headers: entetes });
+  if (r.status === 401) { deconnecter(); throw new Error('Token invalide'); }
+  if (!r.ok) throw new Error((await r.text()).slice(0, 200));
+  const type = r.headers.get('content-type') || '';
+  return type.includes('json') ? r.json() : r.text();
+}
+
+function connecter() {
+  JETON = document.getElementById('jeton').value.trim();
+  localStorage.setItem('foncier_token', JETON);
+  demarrer();
+}
+function deconnecter() {
+  localStorage.removeItem('foncier_token');
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('auth').style.display = 'flex';
+  document.getElementById('auth-erreur').textContent = 'Token invalide.';
+}
+
+/* ── Formatage ───────────────────────────────────────────────────────────── */
+const dollars = v => v == null ? '—' : new Intl.NumberFormat('fr-CA',
+  { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 }).format(v);
+const pourcent = v => v == null ? '—' : (v * 100).toFixed(1) + ' %';
+const echapper = s => String(s ?? '').replace(/[&<>"]/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function classeScore(s) { return s >= 60 ? 's-haut' : s >= 40 ? 's-moyen' : 's-bas'; }
+
+const ETIQUETTES = {
+  aire_tod: ['TOD', 'tod'], zone_ppu: ['PPU', 'ppu'],
+  detresse: ['détresse', 'detresse'], detention_longue: ['25 ans+', 'detention'],
+  sous_utilisation: ['sous-utilisé', ''], seao_proximite: ['SEAO', ''],
+  mise_en_marche: ['EN VENTE', 'marche'],
+};
+function etiquettes(signaux) {
+  return (signaux || []).map(s => {
+    const e = ETIQUETTES[s.cle];
+    return e ? `<span class="etiq ${e[1]}">${e[0]}</span>` : '';
+  }).join('');
+}
+
+/* ── Onglets ─────────────────────────────────────────────────────────────── */
+document.querySelectorAll('.onglet').forEach(o => o.onclick = () => {
+  document.querySelectorAll('.onglet').forEach(x => x.classList.remove('actif'));
+  document.querySelectorAll('.vue').forEach(x => x.classList.remove('actif'));
+  o.classList.add('actif');
+  document.getElementById('v-' + o.dataset.vue).classList.add('actif');
+  if (o.dataset.vue === 'carte') charger_carte();
+  if (o.dataset.vue === 'pipeline') charger_pipeline();
+  if (o.dataset.vue === 'these') afficher_these();
+});
+
+/* ── Aujourd'hui ─────────────────────────────────────────────────────────── */
+async function charger_mouvements() {
+  const cible = document.getElementById('mouvements');
+  try {
+    const d = await api('/mouvements?jours=21');
+    const pastille = document.getElementById('p-mouv');
+    if (d.mouvements.length) {
+      pastille.textContent = d.mouvements.length;
+      pastille.style.display = 'inline-block';
+    } else pastille.style.display = 'none';
+
+    if (!d.mouvements.length) {
+      cible.innerHTML = `<div class="vide">Rien n'a bougé depuis trois semaines.<br>
+        Lance un scan, ou charge un rôle d'évaluation pour alimenter la base.</div>`;
+      return;
+    }
+    const noms = { mise_en_marche: 'en vente', detresse: 'détresse',
+                   progression: 'en hausse', relance_due: 'relance' };
+    cible.innerHTML = d.mouvements.map(m => `
+      <div class="mouvement" onclick="ouvrir('${m.identifiant}')">
+        <span class="genre g-${m.genre}">${noms[m.genre] || m.genre}</span>
+        <span class="score ${classeScore(m.score)}">${m.score}</span>
+        <div style="flex:1">
+          <div>${echapper(m.adresse) || '(adresse inconnue)'}, ${echapper(m.municipalite)}</div>
+          <div style="color:var(--muted);font-size:12px">${echapper(m.detail)}</div>
+        </div>
+      </div>`).join('');
+  } catch (e) { cible.innerHTML = `<div class="vide">Erreur : ${echapper(e.message)}</div>`; }
+}
+
+function afficher_avis_configuration() {
+  if (!STATS) return;
+  const c = STATS.configuration, cible = document.getElementById('avis-config');
+  const manques = [];
+  if (!c.zonage_actif) manques.push('les aires TOD et zones PPU (35 pts)');
+  if (!c.registre_actif) manques.push('le registre foncier — détention 25 ans+ (25 pts)');
+
+  let html = '';
+  if (STATS.base.total === 0) {
+    html += `<div class="avis vide"><strong>La base est vide.</strong> Charger un rôle d'évaluation :
+      <code>python dispatch.py foncier roles --fichier data/role.csv --millesime 2026</code>
+      — ou lancer <code>foncier ingerer</code> pour tout faire d'un coup.</div>`;
+  }
+  if (manques.length) {
+    html += `<div class="avis"><strong>Score plafonné à ${c.points_atteignables}/100.</strong>
+      Non configuré : ${manques.join(', ')}. Voir <code>docs/FONCIER.md</code>.</div>`;
+  }
+  cible.innerHTML = html;
+}
+
+/* ── Liste ───────────────────────────────────────────────────────────────── */
+async function charger_liste() {
+  const cible = document.getElementById('liste');
+  const p = new URLSearchParams({
+    limite: 300,
+    score_min: document.getElementById('f-score').value || 0,
+  });
+  const mun = document.getElementById('f-mun').value.trim();
+  const st = document.getElementById('f-statut').value;
+  if (mun) p.set('municipalite', mun);
+  if (st) p.set('statut', st);
+
+  try {
+    const d = await api('/dossiers?' + p);
+    if (!d.dossiers.length) { cible.innerHTML = '<div class="vide">Aucun dossier.</div>'; return; }
+    cible.innerHTML = `<table><thead><tr>
+      <th>Score</th><th>Adresse</th><th>Municipalité</th>
+      <th class="droite">Valeur</th><th class="droite">Cap</th>
+      <th class="droite">Log.</th><th>Signaux</th><th>Statut</th>
+    </tr></thead><tbody>${d.dossiers.map(x => `
+      <tr onclick="ouvrir('${x.identifiant}')">
+        <td><span class="score ${classeScore(x.score)}">${x.score}</span></td>
+        <td>${echapper(x.adresse) || '—'}</td>
+        <td>${echapper(x.municipalite)}</td>
+        <td class="droite mono">${dollars(x.valeur_totale)}</td>
+        <td class="droite mono">${x.cap_rate_estime ? pourcent(x.cap_rate_estime) : '—'}</td>
+        <td class="droite mono">${x.nombre_logements ?? '—'}</td>
+        <td>${etiquettes(x.signaux)}</td>
+        <td style="color:var(--muted);font-size:12px">${echapper(x.statut)}</td>
+      </tr>`).join('')}</tbody></table>`;
+  } catch (e) { cible.innerHTML = `<div class="vide">Erreur : ${echapper(e.message)}</div>`; }
+}
+
+/* ── Carte ───────────────────────────────────────────────────────────────── */
+async function charger_carte() {
+  const conteneur = document.getElementById('carte');
+  if (typeof L === 'undefined') {
+    conteneur.innerHTML = `<div class="carte-vide">
+      <strong>Leaflet n'a pas pu être chargé.</strong>
+      <span>La carte a besoin d'un accès à unpkg.com. Utilise l'onglet Dossiers.</span></div>`;
+    return;
+  }
+  try {
+    const d = await api('/carte?limite=1000');
+    if (!d.points.length) {
+      conteneur.innerHTML = `<div class="carte-vide">
+        <strong>Aucun dossier géolocalisé.</strong>
+        <span>${d.total} dossier(s) en base, ${d.sans_coordonnees} sans coordonnées.<br>
+        Les coordonnées viennent des rôles géoréférencés (GeoJSON), pas des extraits CSV.</span></div>`;
+      return;
+    }
+    if (!CARTE) {
+      CARTE = L.map('carte').setView([45.53, -73.58], 11);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap, © CARTO', maxZoom: 19,
+      }).addTo(CARTE);
+    }
+    if (COUCHE) CARTE.removeLayer(COUCHE);
+    COUCHE = L.layerGroup(d.points.map(p => {
+      const couleur = p.score >= 60 ? '#4ADE80' : p.score >= 40 ? '#FBBF24' : '#666';
+      return L.circleMarker([p.lat, p.lon], {
+        radius: 5 + p.score / 14, color: couleur, weight: 2,
+        fillColor: couleur, fillOpacity: 0.45,
+      }).bindPopup(`<strong>${echapper(p.adresse)}</strong><br>
+        ${echapper(p.municipalite)} · ${dollars(p.valeur_totale)}<br>
+        Score ${p.score}/100<br>
+        <a href="#" onclick="ouvrir('${p.identifiant}');return false">Ouvrir le dossier</a>`);
+    })).addTo(CARTE);
+    CARTE.fitBounds(L.latLngBounds(d.points.map(p => [p.lat, p.lon])), { padding: [40, 40] });
+    setTimeout(() => CARTE.invalidateSize(), 60);
+  } catch (e) { conteneur.innerHTML = `<div class="carte-vide">Erreur : ${echapper(e.message)}</div>`; }
+}
+
+/* ── Pipeline ────────────────────────────────────────────────────────────── */
+async function charger_pipeline() {
+  const cible = document.getElementById('kanban');
+  const noms = { nouveau: 'Nouveau', surveille: 'Surveillé', enrichi: 'Enrichi',
+                 en_vente: 'En vente', contacte: 'Contacté', rejete: 'Rejeté' };
+  try {
+    const d = await api('/pipeline');
+    cible.innerHTML = Object.entries(noms).map(([cle, nom]) => {
+      const items = d[cle] || [];
+      return `<div class="colonne">
+        <h3>${nom} — ${items.length}</h3>
+        <div class="cartes">${items.map(x => `
+          <div class="carte-doss" onclick="ouvrir('${x.identifiant}')">
+            <div class="titre">${echapper(x.adresse) || '(sans adresse)'}</div>
+            <div class="sous">${echapper(x.municipalite)} · ${dollars(x.valeur_totale)}</div>
+            <div class="sous" style="margin-top:5px">
+              <span class="score ${classeScore(x.score)}">${x.score}</span></div>
+          </div>`).join('') || '<div class="sous" style="padding:8px">vide</div>'}</div>
+      </div>`;
+    }).join('');
+  } catch (e) { cible.innerHTML = `<div class="vide">Erreur : ${echapper(e.message)}</div>`; }
+}
+
+/* ── Thèse ───────────────────────────────────────────────────────────────── */
+function afficher_these() {
+  if (!STATS) return;
+  const t = STATS.these, c = STATS.configuration;
+  document.getElementById('these').innerHTML = `
+    <div class="bloc">
+      <h4>Critères actifs</h4>
+      <div class="paire"><span>Types</span><span>Commercial + multirésidentiel</span></div>
+      <div class="paire"><span>Bande de prix</span><span>${dollars(t.prix_min)} à ${dollars(t.prix_max)}</span></div>
+      <div class="paire"><span>Capture élargie</span><span>${dollars(t.capture_min)} à ${dollars(t.capture_max)}</span></div>
+      <div class="paire"><span>NOI visé</span><span>${pourcent(t.noi_min)} à ${pourcent(t.noi_max)}</span></div>
+      <div class="paire"><span>Détention</span><span>${t.detention_seuil} ans et plus</span></div>
+    </div>
+    <div class="bloc">
+      <h4>Répartition du score — ${t.score_max} points</h4>
+      ${t.poids.map(p => `<div class="paire">
+        <span>${echapper(p.libelle)}</span><span class="mono">${p.points} pts</span></div>
+        <div style="color:var(--muted);font-size:11.5px;padding:2px 0 8px">${echapper(p.justification)}</div>
+      `).join('')}
+    </div>
+    <div class="bloc">
+      <h4>Configuration</h4>
+      <div class="paire"><span>Plafond réel du score</span>
+        <span class="mono" style="color:${c.points_atteignables === 100 ? 'var(--green)' : 'var(--yellow)'}">
+          ${c.points_atteignables}/100</span></div>
+      <div class="paire"><span>Zonage TOD / PPU</span>
+        <span>${c.zonage_actif ? c.zonage_detail.join(' · ') : '❌ non configuré'}</span></div>
+      <div class="paire"><span>Registre foncier</span>
+        <span>${c.registre_actif ? '✅ actif' : '❌ non configuré'}</span></div>
+      <div class="paire"><span>MRC au registre</span><span>${c.mrc_configurees} sur ~85</span></div>
+      <div class="paire"><span>Dépensé ce mois-ci</span><span class="mono">${dollars(STATS.base.depenses_mois)}</span></div>
+    </div>
+    <div class="bloc">
+      <h4>Modifier la thèse</h4>
+      <div style="color:var(--muted);font-size:12.5px">
+        Tous ces critères vivent dans <code>core/foncier/criteres.py</code> — un seul fichier.
+        Après modification, relancer <code>python scripts/test_foncier.py</code>.
+      </div>
+    </div>`;
+}
+
+/* ── Panneau de détail ───────────────────────────────────────────────────── */
+async function ouvrir(identifiant) {
+  const panneau = document.getElementById('panneau');
+  panneau.classList.add('ouvert');
+  document.getElementById('p-corps').innerHTML = '<div class="chargement">Chargement…</div>';
+  try {
+    DOSSIER = await api('/dossier/' + identifiant);
+    rendre_dossier();
+  } catch (e) {
+    document.getElementById('p-corps').innerHTML = `<div class="vide">Erreur : ${echapper(e.message)}</div>`;
+  }
+}
+function fermer_panneau() { document.getElementById('panneau').classList.remove('ouvert'); }
+
+function rendre_dossier() {
+  const i = DOSSIER.immeuble, a = DOSSIER.analyse, o = a.offre;
+  document.getElementById('p-titre').textContent = i.adresse || 'Dossier';
+
+  const canaux = ['telephone', 'courriel', 'poste', 'porte', 'rencontre', 'courtier', 'autre'];
+  const resultats = ['sans_reponse', 'a_rappeler', 'interesse', 'etats_financiers_demandes',
+                     'visite_planifiee', 'offre_deposee', 'refus', 'vendu_a_un_autre'];
+
+  document.getElementById('p-corps').innerHTML = `
+    <div class="bloc">
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
+        <span class="score ${classeScore(i.score)}" style="height:32px;min-width:46px;font-size:15px">${i.score}</span>
+        <div><div>${echapper(i.municipalite)}</div>
+        <div style="color:var(--muted);font-size:12px">${echapper(i.type_immeuble)} · ${echapper(i.statut)}</div></div>
+      </div>
+      <div>${etiquettes(i.signaux)}</div>
+    </div>
+
+    <div class="bloc"><h4>Immeuble</h4>
+      <div class="paire"><span>Lot</span><span class="mono">${echapper(i.lot) || '—'}</span></div>
+      <div class="paire"><span>Usage (CUBF)</span><span>${i.cubf || '—'} ${echapper(i.libelle_utilisation) || ''}</span></div>
+      <div class="paire"><span>Logements</span><span>${i.nombre_logements ?? '—'}</span></div>
+      <div class="paire"><span>Année</span><span>${i.annee_construction ?? '—'}</span></div>
+      <div class="paire"><span>Terrain / bâti</span><span>${i.superficie_terrain ?? '—'} / ${i.superficie_batiment ?? '—'} m²</span></div>
+      <div class="paire"><span>Valeur au rôle</span><span class="mono">${dollars(i.valeur_totale)}</span></div>
+      <div class="paire"><span>Propriétaire</span><span>${echapper(i.proprietaire) || '<em style="color:var(--muted)">non enrichi</em>'}</span></div>
+      <div class="paire"><span>Détention</span><span>${i.annees_detention != null ? i.annees_detention + ' ans' : '<em style="color:var(--muted)">inconnue</em>'}</span></div>
+    </div>
+
+    <div class="bloc"><h4>Pourquoi ce score</h4>
+      <pre>${echapper(DOSSIER.explication_score)}</pre></div>
+
+    <div class="bloc"><h4>Calculateur d'offre</h4>
+      <div class="calc">
+        <label>Prix demandé <input type="number" id="c-prix" value="${i.valeur_totale || ''}"></label>
+        <label>Revenus bruts réels <input type="number" id="c-revenus" placeholder="si connus"></label>
+        <label>Dépenses réelles <input type="number" id="c-depenses" placeholder="si connues"></label>
+        <label>Mise de fonds % <input type="number" id="c-mise" value="25" step="1"></label>
+        <label>Taux % <input type="number" id="c-taux" value="5.75" step="0.05"></label>
+        <label>Amortissement <input type="number" id="c-amort" value="25"></label>
+        <div class="large"><button class="btn primaire" style="width:100%" onclick="recalculer()">Recalculer</button></div>
+      </div>
+      <div id="resultat-calc" style="margin-top:12px">${rendre_offre(o, a)}</div>
+    </div>
+
+    <div class="bloc"><h4>Journaliser un contact</h4>
+      <div class="calc">
+        <label>Canal <select id="j-canal" class="btn">${canaux.map(c => `<option>${c}</option>`).join('')}</select></label>
+        <label>Résultat <select id="j-resultat" class="btn"><option value="">—</option>${resultats.map(r => `<option>${r}</option>`).join('')}</select></label>
+        <label class="large">Résumé <input type="text" id="j-resume" placeholder="Ce qui s'est dit"></label>
+        <div class="large"><button class="btn" style="width:100%" onclick="journaliser()">Enregistrer et programmer la relance</button></div>
+      </div>
+    </div>
+
+    <div class="bloc"><h4>Historique — ${DOSSIER.historique.length}</h4>
+      ${DOSSIER.historique.length ? DOSSIER.historique.map(h => `
+        <div class="paire"><span>${h.date_contact} · ${echapper(h.canal)}</span>
+        <span>${echapper(h.resultat) || ''}</span></div>
+        <div style="color:var(--muted);font-size:12px;padding-bottom:6px">${echapper(h.resume)}</div>
+      `).join('') : '<div style="color:var(--muted);font-size:12.5px">Aucun contact consigné.</div>'}
+    </div>
+
+    <div class="bloc"><h4>Statut</h4>
+      <div class="btns">
+        ${['surveille', 'en_vente', 'contacte', 'rejete'].map(s =>
+          `<button class="btn" onclick="changer_statut('${s}')">${s.replace('_', ' ')}</button>`).join('')}
+      </div>
+    </div>
+
+    <div class="bloc"><h4>Fiche imprimable</h4>
+      <button class="btn" onclick="window.open('${BASE}/foncier/api/fiche/${i.identifiant}?token=${encodeURIComponent(JETON)}','_blank')">
+        Ouvrir la fiche d'analyse</button>
+    </div>`;
+}
+
+function rendre_offre(o, a) {
+  if (!o || !o.noi) {
+    return `<div class="verdict v-non">NOI non estimable — demander les états financiers.</div>`;
+  }
+  const avis = (a.avertissements || []).map(x =>
+    `<div style="color:var(--yellow);font-size:11.5px;margin-top:6px">⚠️ ${echapper(x)}</div>`).join('');
+  const montages = (a.montages || []).map(m => {
+    const classe = !m.financable ? 'v-non' : m.dscr < 1.35 ? 'v-serre' : 'v-ok';
+    return `<div class="verdict ${classe}" style="margin-top:6px">
+      <strong>${echapper(m.nom)}</strong> — liquidités ${dollars(m.liquidites_requises)} ·
+      cashflow ${dollars(m.cashflow_annuel)}/an · DSCR ${m.dscr}<br>
+      <span style="font-size:11.5px;opacity:.85">${echapper(m.verdict)}</span></div>`;
+  }).join('');
+
+  return `
+    <div class="paire"><span>NOI estimé</span><span class="mono">${dollars(o.noi)} <em style="color:var(--muted)">(${o.confiance_noi})</em></span></div>
+    <div class="paire"><span>Offre d'ouverture (cap 8 %)</span><span class="mono">${dollars(o.prix_a_8)}</span></div>
+    <div class="paire"><span>Limite haute (cap 7 %)</span><span class="mono">${dollars(o.prix_a_7)}</span></div>
+    <div class="paire"><span>Plafond du prêteur</span><span class="mono">${dollars(o.prix_dscr_limite)}</span></div>
+    ${o.prix_demande ? `<div class="paire"><span>Prix demandé</span><span class="mono">${dollars(o.prix_demande)}</span></div>` : ''}
+    ${o.ecart_a_7 != null ? `<div class="paire"><span>Écart vs ta limite</span>
+      <span class="mono" style="color:${o.ecart_a_7 >= 0 ? 'var(--green)' : 'var(--red)'}">
+      ${(o.ecart_a_7 * 100).toFixed(1)} %</span></div>` : ''}
+    ${montages}${avis}`;
+}
+
+async function recalculer() {
+  const n = id => { const v = parseFloat(document.getElementById(id).value); return isNaN(v) ? null : v; };
+  const corps = {
+    prix: n('c-prix'), revenu_brut_reel: n('c-revenus'), depenses_reelles: n('c-depenses'),
+    mise_de_fonds_pct: n('c-mise') != null ? n('c-mise') / 100 : null,
+    taux: n('c-taux') != null ? n('c-taux') / 100 : null,
+    amortissement: n('c-amort'),
+  };
+  const cible = document.getElementById('resultat-calc');
+  cible.innerHTML = '<div class="chargement">Calcul…</div>';
+  try {
+    const a = await api('/dossier/' + DOSSIER.immeuble.identifiant + '/analyse',
+      { method: 'POST', body: JSON.stringify(corps) });
+    cible.innerHTML = rendre_offre(a.offre, a);
+  } catch (e) { cible.innerHTML = `<div class="verdict v-non">${echapper(e.message)}</div>`; }
+}
+
+async function journaliser() {
+  const resume = document.getElementById('j-resume').value.trim();
+  if (!resume) { alert('Ajoute un résumé.'); return; }
+  try {
+    const r = await api('/dossier/' + DOSSIER.immeuble.identifiant + '/interaction', {
+      method: 'POST',
+      body: JSON.stringify({
+        canal: document.getElementById('j-canal').value,
+        resume,
+        resultat: document.getElementById('j-resultat').value || null,
+      }),
+    });
+    alert(r.relance ? 'Enregistré. Relance programmée le ' + r.relance : 'Enregistré.');
+    ouvrir(DOSSIER.immeuble.identifiant);
+    charger_mouvements();
+  } catch (e) { alert('Erreur : ' + e.message); }
+}
+
+async function changer_statut(statut) {
+  try {
+    await api('/dossier/' + DOSSIER.immeuble.identifiant + '/statut',
+      { method: 'POST', body: JSON.stringify({ statut }) });
+    ouvrir(DOSSIER.immeuble.identifiant);
+    charger_pipeline();
+  } catch (e) { alert('Erreur : ' + e.message); }
+}
+
+/* ── Commandes ───────────────────────────────────────────────────────────── */
+async function lancer(commande) {
+  if (!confirm(`Lancer « ${commande} » ? Ça peut prendre une minute.`)) return;
+  try {
+    const r = await api('/commande/' + commande, { method: 'POST', body: '{}' });
+    alert(r.resultat.slice(0, 1200));
+    tout_recharger();
+  } catch (e) { alert('Erreur : ' + e.message); }
+}
+
+/* ── Démarrage ───────────────────────────────────────────────────────────── */
+async function tout_recharger() {
+  try {
+    STATS = await api('/stats');
+    document.getElementById('compteur').textContent =
+      `${STATS.base.total} dossiers · ${STATS.base.score_60_et_plus} à 60+ · ` +
+      `score plafonné à ${STATS.configuration.points_atteignables}/100`;
+    afficher_avis_configuration();
+  } catch (e) { /* affiché par les vues */ }
+  charger_mouvements();
+  charger_liste();
+}
+
+async function demarrer() {
+  try {
+    await api('/stats');
+    document.getElementById('auth').style.display = 'none';
+    document.getElementById('app').style.display = 'grid';
+    tout_recharger();
+  } catch (e) {
+    document.getElementById('auth').style.display = 'flex';
+    document.getElementById('auth-erreur').textContent =
+      e.message.includes('Token') ? 'Token invalide.' : 'Serveur injoignable : ' + e.message;
+  }
+}
+
+document.getElementById('jeton').addEventListener('keydown', e => {
+  if (e.key === 'Enter') connecter();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') fermer_panneau(); });
+
+demarrer();
+</script>
+</body>
+</html>

@@ -61,11 +61,15 @@ class FoncierAgent(BaseAgent):
     @property
     def commands(self) -> dict[str, Any]:
         return {
+            "ingerer": self.ingerer,
+            "mrc": self.gerer_mrc,
             "scan": self.scan_ventes_taxes,
             "seao": self.scan_seao,
             "marche": self.scan_marche,
             "calibrer": self.calibrer,
             "roles": self.charger_role,
+            "analyse": self.analyser_dossier,
+            "aujourdhui": self.aujourdhui,
             "top": self.top,
             "brief": self.brief,
             "enrichir": self.enrichir,
@@ -135,6 +139,142 @@ class FoncierAgent(BaseAgent):
         for poids in POIDS:
             lignes.append(f"  {poids.points:>3} pts — {poids.libelle}")
 
+        return "\n".join(lignes)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Mise en route
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def ingerer(self, context: dict | None = None) -> str:
+        """
+        Remplit la base d'un coup : rôles, ventes pour taxes, SEAO, zonage.
+
+        C'est la commande de mise en route. Elle enchaîne tout ce qui est
+        gratuit, dans le bon ordre, et rapporte ce qui a marché et ce qui a
+        manqué — jamais un succès de façade.
+
+        Les rôles à charger se déclarent dans FONCIER_ROLES (URLs ou chemins
+        séparés par des virgules) ou en argument :
+
+          python dispatch.py foncier ingerer --roles data/mtl.geojson,data/laval.csv
+        """
+        import os
+
+        from core.foncier import store
+
+        context = context or {}
+        etapes: list[str] = []
+        debut_total = 0
+
+        try:
+            debut_total = (await asyncio.to_thread(store.statistiques))["total"]
+        except Exception:
+            pass
+
+        # ── 1. Rôles d'évaluation ────────────────────────────────────────────
+        sources_roles = [
+            s.strip()
+            for s in (context.get("roles") or os.environ.get("FONCIER_ROLES", "")).split(",")
+            if s.strip()
+        ]
+
+        if sources_roles:
+            for source in sources_roles:
+                argument = "url" if source.lower().startswith("http") else "fichier"
+                resultat = await self.charger_role({
+                    argument: source,
+                    "millesime": context.get("millesime"),
+                })
+                premiere_ligne = resultat.splitlines()[0] if resultat else ""
+                etapes.append(f"📋 {source}\n   {premiere_ligne}")
+        else:
+            etapes.append(
+                "📋 Rôles — AUCUN CHARGÉ.\n"
+                "   Sans rôle d'évaluation, la base n'a ni usage, ni valeur, ni\n"
+                "   superficie : les filtres de la thèse ne peuvent pas s'appliquer.\n"
+                "   → Télécharger sur donneesquebec.ca (jeu « Rôles d'évaluation\n"
+                "     foncière du Québec », millésimes 2008 à 2026), puis :\n"
+                "     FONCIER_ROLES=data/role.geojson python dispatch.py foncier ingerer\n"
+                "   → Préférer une source GÉORÉFÉRENCÉE (GeoJSON) : sans coordonnées,\n"
+                "     ni la carte ni les signaux TOD/PPU ne fonctionnent."
+            )
+
+        # ── 2. Ventes pour taxes ─────────────────────────────────────────────
+        etapes.append("🏛️  " + (await self.scan_ventes_taxes(context)).splitlines()[0])
+
+        # ── 3. SEAO ──────────────────────────────────────────────────────────
+        try:
+            etapes.append("📢 " + (await self.scan_seao(context)).splitlines()[0])
+        except Exception as e:
+            etapes.append(f"📢 SEAO indisponible — {e}")
+
+        # ── 4. Bilan ─────────────────────────────────────────────────────────
+        stats = await asyncio.to_thread(store.statistiques)
+        gain = stats["total"] - debut_total
+
+        lignes = [
+            "🚜 INGESTION COMPLÈTE",
+            "",
+            *etapes,
+            "",
+            "─" * 50,
+            f"Base — {stats['total']} dossier(s) au total ({gain:+d} cette passe)",
+            f"       {stats['score_60_et_plus']} à 60 points ou plus",
+            "",
+            await self.diagnostic_sources(),
+        ]
+        return "\n".join(lignes)
+
+    async def gerer_mrc(self, context: dict | None = None) -> str:
+        """
+        Liste ou étend le registre des MRC.
+
+        Le Québec compte environ 85 MRC et chacune publie son avis de vente pour
+        taxes. Les ajouter est de la saisie, pas du développement — et c'est le
+        meilleur retour sur temps investi du projet.
+
+          python dispatch.py foncier mrc
+          python dispatch.py foncier mrc --ajouter "MRC de Rouville" --url https://…
+        """
+        from core.foncier.sources import ventes_taxes
+
+        context = context or {}
+        nom = context.get("ajouter")
+
+        if nom:
+            url = context.get("url")
+            if not url:
+                return "❌ Préciser --url (la page de la MRC où l'avis est publié)."
+            try:
+                total = await asyncio.to_thread(
+                    ventes_taxes.ajouter_mrc, nom, url, context.get("region", "")
+                )
+            except ValueError as e:
+                return f"❌ {e}"
+            return f"✅ {nom} ajoutée — {total} MRC au registre (sur ~85 au Québec)."
+
+        registre = await asyncio.to_thread(ventes_taxes.charger_registre)
+        integrees = {s.nom for s in ventes_taxes.REGISTRE_MRC}
+
+        lignes = [
+            f"🏛️  {len(registre)} MRC au registre, sur environ 85 au Québec",
+            "",
+        ]
+        for source in registre:
+            marque = "·" if source.nom in integrees else "+"
+            region = f" [{source.region}]" if source.region else ""
+            lignes.append(f"  {marque} {source.nom}{region}")
+            lignes.append(f"      {source.url_page}")
+
+        lignes += [
+            "",
+            "  · vérifiée et intégrée au code    + ajoutée localement",
+            "",
+            "Pour en ajouter une :",
+            '  python dispatch.py foncier mrc --ajouter "MRC de X" --url https://…',
+            "",
+            f"Registre local : {ventes_taxes.FICHIER_MRC}",
+        ]
         return "\n".join(lignes)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -590,6 +730,74 @@ class FoncierAgent(BaseAgent):
             return f"❌ {e}"
 
         return roles.distribution_cubf(immeubles, int(context.get("codes", 30)))
+
+    async def analyser_dossier(self, context: dict | None = None) -> str:
+        """
+        Fiche d'analyse financière d'un dossier — offre, financement, sensibilité.
+
+        Options : --id <identifiant> --prix <montant> --revenus <brut réel>
+                  --depenses <réelles>
+        """
+        from core.foncier import montage, store
+
+        context = context or {}
+        identifiant = context.get("id")
+        if not identifiant:
+            return "❌ Préciser --id (identifiant visible dans `foncier top`)."
+
+        immeuble = await asyncio.to_thread(store.charger, identifiant)
+        if immeuble is None:
+            return f"❌ Dossier {identifiant} introuvable."
+
+        def nombre(cle: str):
+            valeur = context.get(cle)
+            try:
+                return float(valeur) if valeur is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        analyse = await asyncio.to_thread(
+            montage.analyser, immeuble, nombre("prix"),
+            nombre("revenus"), nombre("depenses"),
+        )
+        return montage.fiche(analyse)
+
+    async def aujourdhui(self, context: dict | None = None) -> str:
+        """
+        Ce qui a bougé et mérite une action : mises en marché, détresse,
+        scores en hausse, relances dues.
+        """
+        from core.foncier import suivi
+
+        context = context or {}
+        jours = int(context.get("jours", 21))
+
+        mouvements = await asyncio.to_thread(suivi.mouvements, jours)
+        if not mouvements:
+            return (
+                f"Rien n'a bougé depuis {jours} jours.\n"
+                "Lancer `foncier ingerer` pour alimenter la base."
+            )
+
+        noms = {
+            "mise_en_marche": "EN VENTE",
+            "detresse": "DÉTRESSE",
+            "progression": "EN HAUSSE",
+            "relance_due": "RELANCE",
+        }
+
+        lignes = [f"📌 {len(mouvements)} dossier(s) à regarder aujourd'hui", ""]
+        for mouvement in mouvements[:25]:
+            lignes.append(
+                f"  [{mouvement.score:>3}] {noms.get(mouvement.genre, mouvement.genre):<9} "
+                f"{mouvement.adresse or '(sans adresse)'}, {mouvement.municipalite}"
+            )
+            lignes.append(f"        {mouvement.detail}")
+
+        if len(mouvements) > 25:
+            lignes.append(f"  … et {len(mouvements) - 25} autre(s)")
+
+        return "\n".join(lignes)
 
     async def marquer(self, context: dict | None = None) -> str:
         """Change le statut d'un dossier. --id <identifiant> --statut <statut> --note <texte>"""

@@ -255,6 +255,16 @@ async def main():
                 log.error(f"/run/{agent_name}/{command} error: {exc}")
                 raise HTTPException(status_code=500, detail=str(exc))
 
+        # ── Outil de prospection foncière ─────────────────────────────────────
+        # Interface à /foncier/, données sous /foncier/api/. Monté séparément
+        # pour garder ce bloc lisible — les routes vivent dans api/foncier_routes.py.
+        try:
+            from api.foncier_routes import router as _foncier_router
+            fastapi_app.include_router(_foncier_router)
+            log.info("main: interface foncier montée sur /foncier/")
+        except Exception as _e:
+            log.error(f"main: montage du routeur foncier impossible — {_e}", exc_info=True)
+
         def run_api():
             import asyncio as _aio
             from core.log_bus import bus as _bus

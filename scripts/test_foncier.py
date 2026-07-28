@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.foncier import finance, scoring, store  # noqa: E402
+from datetime import date, timedelta  # noqa: E402
 from core.foncier.criteres import DEFAUT, SCORE_MAX  # noqa: E402
 from core.foncier.geo import IndexSpatial, distance_m, point_dans_geometrie  # noqa: E402
 from core.foncier.modele import Immeuble, Signal  # noqa: E402
@@ -576,6 +577,267 @@ verifier(
 comparaison = centris.comparables(extraites)
 verifier("médiane" in comparaison, "portrait des prix demandés produit")
 verifier("logement" in comparaison, "prix par logement calculé")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n16. Analyse de transaction")
+
+from core.foncier import montage  # noqa: E402
+
+# Versement hypothécaire : 1 M$ à 5,75 % sur 25 ans ≈ 6 270 $/mois.
+versement = montage.paiement_mensuel(1_000_000, 0.0575, 25)
+verifier(6_100 < versement < 6_450, f"versement mensuel calculé : {versement:,.0f} $")
+verifier(
+    montage.paiement_mensuel(0, 0.06, 25) == 0.0,
+    "aucun versement sur un emprunt nul",
+)
+
+# Droits de mutation, barème de base : 61 500 × 0,5 % + 246 300 × 1 % + reste × 1,5 %.
+mutation = montage.droits_mutation(1_000_000)
+attendu = 61_500 * 0.005 + (307_800 - 61_500) * 0.01 + (1_000_000 - 307_800) * 0.015
+verifier(abs(mutation - attendu) < 1, f"droits de mutation : {mutation:,.0f} $")
+verifier(montage.droits_mutation(0) == 0, "aucun droit sur un prix nul")
+
+# Prix pour un cap rate cible — le calcul qui transforme la thèse en offre.
+verifier(
+    abs(montage.prix_pour_cap_rate(140_000, 0.07) - 2_000_000) < 1,
+    "140 k$ de NOI à 7 % → 2 M$",
+)
+verifier(
+    montage.prix_pour_cap_rate(140_000, 0.08) < montage.prix_pour_cap_rate(140_000, 0.07),
+    "un cap rate plus élevé exige un prix plus bas",
+)
+
+# Plafond du prêteur.
+plafond = montage.prix_maximal_finançable(140_000)
+verifier(plafond > 0, f"plafond du prêteur calculé : {plafond:,.0f} $")
+plafond_verif = montage.Montage("v", plafond, 140_000)
+verifier(
+    abs(plafond_verif.dscr - montage.DSCR_MINIMUM) < 0.02,
+    f"au prix plafond, le DSCR touche exactement le seuil ({plafond_verif.dscr:.2f})",
+)
+verifier(
+    montage.prix_maximal_finançable(0) == 0,
+    "aucun plafond calculable sans NOI",
+)
+
+# Un montage complet.
+m = montage.Montage("Test", 2_000_000, 140_000)
+verifier(m.mise_de_fonds == 500_000, "mise de fonds 25 % de 2 M$")
+verifier(m.emprunt == 1_500_000, "emprunt = prix − mise de fonds")
+verifier(abs(m.cap_rate - 0.07) < 0.001, "cap rate 7 %")
+verifier(m.liquidites_requises > m.mise_de_fonds, "liquidités incluent frais et mutation")
+verifier(
+    abs(m.cashflow_annuel - (m.noi - m.service_dette_annuel)) < 1,
+    "cashflow = NOI − service de dette",
+)
+verifier(m.dscr > 1.0, f"DSCR calculé : {m.dscr:.2f}")
+
+# Un immeuble trop cher pour son NOI doit être déclaré non finançable.
+trop_cher = montage.Montage("Trop cher", 4_000_000, 140_000)
+verifier(not trop_cher.finançable, "4 M$ pour 140 k$ de NOI → refus probable")
+verifier("REFUS" in trop_cher.verdict, "verdict de refus explicite")
+verifier(trop_cher.cashflow_annuel < 0, "cashflow négatif détecté")
+
+# Scénarios et sensibilité.
+tous = montage.scenarios(2_000_000, 140_000)
+verifier(len(tous) == 4, "quatre scénarios de financement")
+verifier(
+    max(s.dscr for s in tous) > min(s.dscr for s in tous),
+    "les scénarios se distinguent par leur DSCR",
+)
+prudent = next(s for s in tous if "Prudent" in s.nom)
+levier = next(s for s in tous if "levier" in s.nom)
+verifier(
+    prudent.dscr > levier.dscr,
+    "plus de mise de fonds → meilleur DSCR",
+)
+verifier(
+    prudent.liquidites_requises > levier.liquidites_requises,
+    "plus de mise de fonds → plus de liquidités requises",
+)
+
+sens = montage.sensibilite(2_000_000, 140_000)
+verifier(len(sens) == 4, "quatre scénarios de sensibilité du NOI")
+verifier(
+    sens[0]["dscr"] < sens[-1]["dscr"],
+    "un NOI plus faible dégrade le DSCR",
+)
+
+# Analyse complète sur un immeuble réel du jeu de test.
+analyse = montage.analyser(multiplex, prix=2_600_000)
+verifier(analyse.offre.noi > 0, "analyse complète produit un NOI")
+verifier(len(analyse.montages) == 4, "analyse inclut les scénarios")
+verifier(
+    any("reconstruit du rôle" in a for a in analyse.avertissements),
+    "avertissement sur la provenance du NOI",
+)
+verifier(
+    any("Montréal" in a for a in analyse.avertissements),
+    "avertissement sur les droits de mutation montréalais",
+)
+
+texte_fiche = montage.fiche(analyse)
+verifier("FOURCHETTE D'OFFRE" in texte_fiche, "fiche imprimable produite")
+verifier("SCÉNARIOS DE FINANCEMENT" in texte_fiche, "fiche inclut les scénarios")
+verifier("À valider" in texte_fiche, "fiche rappelle qu'il faut valider")
+
+# Un immeuble sans revenus estimables ne doit produire aucune offre.
+opaque = Immeuble(lot="99", municipalite="Gaspé", cubf=5300, valeur_totale=1_500_000)
+analyse_vide = montage.analyser(opaque)
+verifier(analyse_vide.offre.noi == 0, "aucune offre calculée sans NOI")
+verifier(
+    any("NOI non estimable" in a for a in analyse_vide.avertissements),
+    "l'impossibilité est dite explicitement",
+)
+verifier(len(analyse_vide.montages) == 0, "aucun scénario inventé sans NOI")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n17. CRM — contacts, interactions, relances")
+
+from core.foncier import suivi  # noqa: E402
+
+with tempfile.TemporaryDirectory() as tmp:
+    chemin_crm = Path(tmp) / "crm.db"
+    conn = suivi.connexion(chemin_crm)
+
+    cible = Immeuble(
+        lot="7 111 222", adresse="500 rue Sainte-Catherine Est",
+        municipalite="Montréal", cubf=1000, nombre_logements=10,
+        valeur_totale=3_000_000,
+    )
+    scoring.scorer(cible)
+    store.enregistrer([cible], conn)
+    ident = cible.identifiant
+
+    contact_id = suivi.ajouter_contact(
+        suivi.Contact(identifiant=ident, nom="Gestion Larose inc.",
+                      role="proprietaire", telephone="514-555-0100"),
+        conn=conn,
+    )
+    verifier(contact_id > 0, "contact rattaché au dossier")
+    verifier(len(suivi.contacts_du_dossier(ident, conn)) == 1, "contact relu")
+
+    resultat = suivi.journaliser(
+        suivi.Interaction(identifiant=ident, canal="telephone",
+                          resume="Premier appel, ouvert à discuter",
+                          resultat="interesse"),
+        conn=conn,
+    )
+    verifier(resultat["interaction_id"] > 0, "interaction consignée")
+    verifier(resultat["statut"] == "contacte", "statut du dossier passé à « contacté »")
+    verifier(resultat["relance"] is not None, "relance programmée automatiquement")
+
+    attendue = (date.today() + timedelta(days=suivi.DELAI_RELANCE["interesse"])).isoformat()
+    verifier(resultat["relance"] == attendue, "délai de relance conforme au résultat")
+
+    verifier(len(suivi.historique(ident, conn)) == 1, "historique lisible")
+
+    # Canal ou résultat inconnu doit lever plutôt que d'écrire n'importe quoi.
+    for mauvais in (
+        suivi.Interaction(identifiant=ident, canal="pigeon", resume="x"),
+        suivi.Interaction(identifiant=ident, canal="courriel", resume="x", resultat="peut-etre"),
+    ):
+        try:
+            suivi.journaliser(mauvais, conn=conn)
+            verifier(False, "valeur invalide doit lever ValueError")
+        except ValueError:
+            verifier(True, f"valeur invalide rejetée ({mauvais.canal}/{mauvais.resultat})")
+
+    # Un refus ne ferme pas le dossier — il le remet en surveillance.
+    suivi.journaliser(
+        suivi.Interaction(identifiant=ident, canal="telephone",
+                          resume="Pas intéressé cette année", resultat="refus"),
+        conn=conn,
+    )
+    verifier(
+        store.charger(ident, conn).statut == "surveille",
+        "un refus renvoie le dossier en surveillance, pas à la poubelle",
+    )
+
+    # Relance manuelle et clôture.
+    date_relance = suivi.programmer_relance(ident, 0, "Rappeler ce matin", conn=conn)
+    verifier(date_relance == date.today().isoformat(), "relance manuelle datée du jour")
+
+    dues = suivi.relances_dues(conn=conn)
+    verifier(len(dues) >= 1, f"{len(dues)} relance(s) due(s) détectée(s)")
+    verifier(dues[0]["adresse"] == cible.adresse, "la relance porte l'adresse du dossier")
+
+    verifier(suivi.marquer_relance_faite(dues[0]["relance_id"], conn), "relance clôturée")
+    verifier(
+        not suivi.marquer_relance_faite(dues[0]["relance_id"], conn),
+        "une relance déjà faite ne se clôture pas deux fois",
+    )
+
+    # Mouvements — ce qui mérite une action.
+    en_vente = Immeuble(
+        lot="8 333 444", adresse="900 avenue du Mont-Royal Est",
+        municipalite="Montréal", cubf=1000, nombre_logements=8,
+        valeur_totale=2_800_000,
+    )
+    en_vente.ajouter_signal(
+        Signal("mise_en_marche", "Sur Centris — fiche #99887766", "centris_alerte",
+               date_signal=date.today().isoformat())
+    )
+    scoring.scorer(en_vente)
+    store.enregistrer([en_vente], conn)
+
+    bouge = suivi.mouvements(21, conn)
+    verifier(len(bouge) >= 1, f"{len(bouge)} mouvement(s) détecté(s)")
+    genres = {m.genre for m in bouge}
+    verifier("mise_en_marche" in genres, "mise en marché remontée dans les mouvements")
+    verifier(
+        bouge[0].urgence >= bouge[-1].urgence,
+        "mouvements triés par urgence décroissante",
+    )
+    verifier(
+        len({m.identifiant for m in bouge}) == len(bouge),
+        "un dossier n'apparaît qu'une fois, avec son mouvement le plus urgent",
+    )
+
+    tableau = suivi.tableau_pipeline(conn)
+    verifier(set(tableau) >= {"nouveau", "surveille", "contacte", "rejete"},
+             "pipeline structuré par statut")
+    total_pipeline = sum(len(v) for v in tableau.values())
+    verifier(total_pipeline == 2, f"2 dossiers répartis dans le pipeline (obtenu : {total_pipeline})")
+
+    conn.close()
+
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n18. Registre des MRC extensible")
+
+with tempfile.TemporaryDirectory() as tmp:
+    fichier_mrc = Path(tmp) / "mrc.json"
+    original = ventes_taxes.FICHIER_MRC
+    ventes_taxes.FICHIER_MRC = fichier_mrc
+    try:
+        base = ventes_taxes.charger_registre()
+        verifier(len(base) == len(ventes_taxes.REGISTRE_MRC),
+                 f"{len(base)} MRC intégrées au code")
+
+        total = ventes_taxes.ajouter_mrc(
+            "MRC de Rouville", "https://exemple.qc.ca/vente-pour-taxes/", "Montérégie"
+        )
+        verifier(total == len(base) + 1, "MRC ajoutée au registre local")
+        verifier(fichier_mrc.exists(), "registre local écrit sur disque")
+
+        etendu = ventes_taxes.charger_registre()
+        verifier(any(s.nom == "MRC de Rouville" for s in etendu), "MRC locale relue")
+
+        # Réajouter la même ne doit pas créer de doublon.
+        ventes_taxes.ajouter_mrc("MRC de Rouville", "https://autre.qc.ca/avis/")
+        final = ventes_taxes.charger_registre()
+        verifier(len(final) == len(base) + 1, "pas de doublon sur réajout")
+        rouville = next(s for s in final if s.nom == "MRC de Rouville")
+        verifier(rouville.url_page == "https://autre.qc.ca/avis/", "URL mise à jour")
+
+        for mauvais in (("", "https://x.ca"), ("MRC X", ""), ("MRC X", "pas-une-url")):
+            try:
+                ventes_taxes.ajouter_mrc(*mauvais)
+                verifier(False, f"entrée invalide doit lever : {mauvais}")
+            except ValueError:
+                verifier(True, f"entrée invalide rejetée : {mauvais}")
+    finally:
+        ventes_taxes.FICHIER_MRC = original
 
 # ─────────────────────────────────────────────────────────────────────────────
 print("\n" + "═" * 60)
